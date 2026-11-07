@@ -259,6 +259,27 @@ function! s:CloseBuf() abort
   execute 'silent! bdelete' b
 endfunction
 
+" :q closes the current tab (buffer) like VSCode while other tabs are open; the last one quits.
+" Splits and special windows (tree, terminal, help, ...) keep the usual :q.
+function! s:Quit(bang) abort
+  let editwins = len(filter(range(1, winnr('$')), 'getwinvar(v:val, "&buftype") ==# ""'))
+  if &buftype !=# '' || editwins > 1 || len(getbufinfo({'buflisted': 1})) < 2 || (&modified && !a:bang)
+    execute 'quit' . (a:bang ? '!' : '')
+    return
+  endif
+  let b = bufnr('')
+  if a:bang
+    setlocal nomodified  " discard: keep autosave (on leaving the buffer) from writing it
+  endif
+  bprevious
+  execute 'bdelete' . (a:bang ? '!' : '') b
+endfunction
+command! -bang VimzipQuit call s:Quit(<bang>0)
+command! -bang VimzipWriteQuit update | call s:Quit(<bang>0)
+cnoreabbrev <expr> q getcmdtype() ==# ':' && getcmdline() ==# 'q' ? 'VimzipQuit' : 'q'
+cnoreabbrev <expr> wq getcmdtype() ==# ':' && getcmdline() ==# 'wq' ? 'VimzipWriteQuit' : 'wq'
+cnoreabbrev <expr> x getcmdtype() ==# ':' && getcmdline() ==# 'x' ? 'VimzipWriteQuit' : 'x'
+
 " bottom terminal panel
 function! s:ToggleTerm() abort
   let t = get(s:, 'term', -1)
