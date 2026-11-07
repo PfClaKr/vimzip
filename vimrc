@@ -97,6 +97,10 @@ let g:NERDTreeShowHidden = 1
 let g:NERDTreeMinimalUI = 1
 let g:NERDTreeIgnore = ['^\.git$']
 let g:NERDTreeWinSize = 30
+let g:NERDTreeGitStatusConcealBrackets = 1
+let g:NERDTreeGitStatusIndicatorMapCustom = {
+  \ 'Modified': 'M', 'Staged': 'A', 'Untracked': 'U', 'Renamed': 'R', 'Unmerged': 'C',
+  \ 'Deleted': 'D', 'Dirty': '~', 'Ignored': 'I', 'Clean': ' ', 'Unknown': '?'}
 
 " termdebug
 let g:termdebug_config = {'wide': 1}

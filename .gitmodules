@@ -25,3 +25,6 @@
 [submodule "pack/vimzip/start/lightline-bufferline"]
 	path = pack/vimzip/start/lightline-bufferline
 	url = https://github.com/mengelbrecht/lightline-bufferline
+[submodule "pack/vimzip/start/nerdtree-git-plugin"]
+	path = pack/vimzip/start/nerdtree-git-plugin
+	url = https://github.com/Xuyuanp/nerdtree-git-plugin
