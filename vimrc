@@ -3,7 +3,7 @@ set nocompatible
 let &packpath = $VIMZIP . ',' . $VIMRUNTIME
 let &runtimepath = $VIMZIP . ',' . $VIMRUNTIME . ',' . $VIMRUNTIME . '/after'
 let s:cache = expand('~/.cache/vimzip')
-for s:d in ['undo', 'swap', 'sessions', 'tags']
+for s:d in ['undo', 'swap', 'sessions', 'tags', 'systags']
   silent! call mkdir(s:cache . '/' . s:d, 'p')
 endfor
 
@@ -77,12 +77,49 @@ if s:lsp
   autocmd FileType c,cpp setlocal omnifunc=ale#completion#OmniFunc
 endif
 
-function! s:GoDef() abort
-  if s:lsp && &filetype =~# '^\(c\|cpp\)$'
-    ALEGoToDefinition
-  else
-    execute "normal! \<C-]>"
+" system headers: read-only, no linting
+let g:ale_pattern_options = {'^/usr/': {'ale_enabled': 0}}
+autocmd BufReadPost /usr/* setlocal readonly nomodifiable
+
+" tags for the system headers the current C/C++ file includes (via cc -M)
+function! s:SysTags() abort
+  let cxx = &filetype ==# 'cpp'
+  let cc = get(filter(cxx ? ['c++', 'g++', 'clang++'] : ['cc', 'gcc', 'clang'], 'executable(v:val)'), 0, '')
+  if cc ==# '' | return 0 | endif
+  let src = expand('%:p')
+  let dirs = uniq(sort([expand('%:p:h'), expand('%:p:h:h') . '/include', getcwd(), getcwd() . '/include']))
+  let out = system(cc . ' -M -MG -w ' . join(map(dirs, '"-I" . shellescape(v:val)')) . ' ' . shellescape(src))
+  let hdrs = filter(split(out), 'v:val =~# "^/" && v:val !=# src')
+  if empty(hdrs) | return 0 | endif
+  let f = s:cache . '/systags/' . substitute(src, '[/\\:]', '%', 'g') . '.tags'
+  call system('ctags --languages=C,C++ --langmap=C:+.h --kinds-C=+px --kinds-C++=+px -L - -f '
+        \ . shellescape(f), join(hdrs, "\n"))
+  if v:shell_error | return 0 | endif
+  let tags = empty(&l:tags) ? &g:tags : &l:tags
+  if index(split(tags, ','), f) < 0
+    let &l:tags = tags . ',' . escape(f, ',')
   endif
+  return 1
+endfunction
+
+" go to definition: clangd if present, else project tags, else included system headers
+function! s:GoDef() abort
+  let c = &filetype =~# '^\(c\|cpp\)$'
+  if s:lsp && c
+    ALEGoToDefinition
+    return
+  endif
+  let w = expand('<cword>')
+  if w ==# '' | return | endif
+  if empty(taglist('^' . w . '$')) && !(c && s:SysTags())
+    echohl WarningMsg | echo 'No definition found: ' . w | echohl None
+    return
+  endif
+  try
+    execute 'tjump' w
+  catch /E426\|E433/
+    echohl WarningMsg | echo 'No definition found: ' . w | echohl None
+  endtry
 endfunction
 
 " gutentags: keep tag files out of projects
