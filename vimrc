@@ -51,6 +51,12 @@ if $COLORTERM =~# 'truecolor\|24bit'
   set termguicolors
 endif
 set background=dark
+" use the terminal's own background so its edge padding blends in (no side bars in fullscreen)
+augroup vimzip_bg
+  autocmd!
+  autocmd ColorScheme * for s:g in ['Normal', 'NonText', 'EndOfBuffer', 'SignColumn', 'LineNr', 'FoldColumn']
+        \ | execute 'highlight' s:g 'ctermbg=NONE guibg=NONE' | endfor
+augroup END
 silent! colorscheme habamax
 
 " clipboard over SSH (OSC 52): yanks also go to the local clipboard
