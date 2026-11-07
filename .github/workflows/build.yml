@@ -3,7 +3,7 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    paths-ignore: ['README.md', 'docs/**']
   pull_request:
   workflow_dispatch:
 
@@ -24,7 +24,16 @@ jobs:
         with:
           name: vimzip-linux-x86_64
           path: dist/vimzip-linux-x86_64.zip
-      - if: startsWith(github.ref, 'refs/tags/')
+      - id: tag
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          echo "tag=$(date -u +%Y.%m.%d).${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          { echo '```'; cat versions.env; echo '```'; } > notes.md
+      - if: steps.tag.outputs.tag
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body_path: notes.md
           files: dist/vimzip-linux-x86_64.zip
+          make_latest: true
