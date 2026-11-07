@@ -103,7 +103,9 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 | `%` | 짝 괄호로 이동 |
 | `F3` | 함수 목록 (`Enter`로 이동) |
 
-### 파일 트리 (`F2`)
+### 파일 트리 (`Ctrl+Shift+e` / `F2`)
+
+`Ctrl+Shift+e`는 VSCode처럼 동작합니다: 닫혀 있으면 열고, 다른 창에 있으면 트리로 이동, 트리에 있으면 닫기.
 
 | 키 | 기능 |
 |---|---|
@@ -123,7 +125,19 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 | `y` / 선택 후 `Ctrl+c` | 복사 (SSH 너머 로컬 클립보드로도, OSC 52 지원 터미널) |
 | `>>` / `<<` | 들여쓰기 / 내어쓰기 |
 | `=` | 선택 영역 자동 정렬 (`gg=G`는 파일 전체) |
-| `Ctrl+n` | 단어 자동완성 (자동 팝업은 꺼져 있음) |
+| `Ctrl+n` / `Ctrl+p` | 자동완성: 열린 파일, 프로젝트 전체 단어, 함수 이름, include한 헤더 (자동 팝업은 꺼져 있음) |
+
+### AI 에이전트
+
+| 키 | 기능 |
+|---|---|
+| `Ctrl+Alt+i` / `Space a` | 오른쪽에 AI 에이전트 열기 / 숨기기 (숨겨도 계속 실행) |
+
+설치된 claude, codex, gemini, aider, opencode 중 먼저 찾은 것을 실행합니다. 직접 정하려면:
+
+```sh
+export VIMZIP_AI=codex    # 인자도 가능: VIMZIP_AI="aider --model sonnet"
+```
 
 ### Git
 
@@ -142,8 +156,9 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 | `F9` | 중단점 토글 |
 | `F10` / `F11` / `Shift+F11` | 다음 줄 / 함수 안으로 / 함수 밖으로 |
 
-- `Ctrl+Shift+f`는 터미널이 가로채면 동작하지 않습니다. 그때는 `Space f`를 쓰세요.
+- `Ctrl+Shift+f`, `Ctrl+Shift+e`, `Ctrl+Alt+i`는 터미널이 가로채거나 구분하지 못하면 동작하지 않습니다. 그때는 `Space f`, `F2`, `Space a`를 쓰세요.
 - 서버에 clangd가 있으면 정의 이동·에러 표시에 clangd를 씁니다.
+- 개인 설정은 `~/.config/vimzip/vimrc`에 넣으면 마지막에 읽습니다.
 
 ## 스크린샷
 
