@@ -232,7 +232,7 @@ function! s:Debug() abort
   if exists(':RunOrContinue') == 2
     RunOrContinue
   else
-    call feedkeys(':Termdebug ', 'n')
+    call feedkeys(':TermdebugCommand ', 'n')
   endif
 endfunction
 nnoremap <silent> <F5> :call <SID>Debug()<CR>
