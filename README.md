@@ -47,7 +47,7 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 | SSH 서버에 올라가는 것 | 74 MB 전부 | VS Code Server 283 MB + 확장 |
 | 서버 요구 사항 | x86-64 리눅스면 어디나 | glibc 2.28 이상 |
 
-vimzip은 C 파일을 열고 트리, 에러 검사, git 표시가 모두 켜진 상태에서 약 70 ms에 뜨고 메모리 약 30 MB를 씁니다. VSCode 쪽은 같은 소스로 빌드한 VSCodium 1.143과 cpptools 1.35의 파일 크기입니다.
+vimzip은 C 파일을 열고 트리, 에러 검사, git 표시가 모두 켜진 상태에서 약 70 ms에 뜨고 메모리 약 30 MB를 씁니다. VSCode 쪽은 같은 소스로 빌드한 VSCodium 1.143과 cpptools 1.35의 파일 크기입니다. LLVM(파일 19만 개)을 열어도 `vim .`은 약 0.14초, 메모리는 약 31 MB입니다.
 
 ## 단축키
 
@@ -169,6 +169,11 @@ export VIMZIP_AI=codex    # 인자도 가능: VIMZIP_AI="aider --model sonnet"
 
 - `Ctrl+Shift+f`, `Ctrl+Shift+e`, `Ctrl+Alt+i`는 터미널이 가로채거나 구분하지 못하면 동작하지 않습니다. 그때는 `Space f`, `F2`, `Space a`를 쓰세요.
 - 서버에 clangd가 있으면 정의 이동·에러 표시에 clangd를 씁니다.
+- CMake 프로젝트는 `compile_commands.json`을 만들어 두면 에러 검사와 `gd`가 빌드와 같은 include 경로를 씁니다:
+
+  ```sh
+  cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+  ```
 - 개인 설정은 `~/.config/vimzip/vimrc`에 넣으면 마지막에 읽습니다.
 
 ## 스크린샷
