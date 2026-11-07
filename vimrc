@@ -218,6 +218,40 @@ function! s:ToggleTerm() abort
   endif
 endfunction
 
+" AI agent on the right (Ctrl+Alt+I / Space a): g:vimzip_ai, $VIMZIP_AI, or the first agent CLI found
+function! s:ToggleAi() abort
+  let t = get(s:, 'ai', -1)
+  let w = bufwinnr(t)
+  if w > 0
+    execute w . 'hide'
+    call win_gotoid(get(s:, 'ai_from', 0))
+    return
+  endif
+  let cmd = get(g:, 'vimzip_ai', $VIMZIP_AI)
+  if cmd ==# ''
+    let cmd = get(filter(['claude', 'codex', 'gemini', 'aider', 'opencode'], 'executable(v:val)'), 0, '')
+  endif
+  if cmd ==# '' && !bufexists(t)
+    echohl WarningMsg | echo 'No AI agent found. Set one, e.g.: export VIMZIP_AI=claude' | echohl None
+    return
+  endif
+  call s:EditWin()
+  let s:ai_from = win_getid()
+  let width = max([60, &columns * 2 / 5])
+  if bufexists(t) && term_getstatus(t) =~# 'running'
+    execute 'botright vertical sbuffer' t
+    execute 'vertical resize' width
+  else
+    execute 'botright vertical' width 'new'
+    let blank = bufnr('')
+    let s:ai = term_start([&shell, &shellcmdflag, cmd], {'curwin': 1, 'term_kill': 'hup',
+          \ 'term_finish': 'close', 'term_name': 'AI: ' . cmd})
+    if bufexists(blank) && blank != s:ai
+      execute 'silent! bwipeout' blank
+    endif
+  endif
+endfunction
+
 " file tree like VSCode Ctrl+Shift+E: open and focus, focus, or close
 function! s:Explorer() abort
   if exists('b:NERDTree')
@@ -343,6 +377,9 @@ xnoremap <C-c> y
 nnoremap <silent> <F2> :NERDTreeToggle<CR>
 nnoremap <silent> <C-S-e> :call <SID>Explorer()<CR>
 tnoremap <silent> <C-S-e> <C-w>:call <SID>Explorer()<CR>
+nnoremap <silent> <C-M-i> :call <SID>ToggleAi()<CR>
+tnoremap <silent> <C-M-i> <C-w>:call <SID>ToggleAi()<CR>
+nnoremap <silent> <leader>a :call <SID>ToggleAi()<CR>
 nnoremap <silent> <F3> :TagbarToggle<CR>
 nnoremap <silent> <F4> :call <SID>ToggleTerm()<CR>
 tnoremap <silent> <F4> <C-w>:call <SID>ToggleTerm()<CR>
