@@ -157,9 +157,17 @@ function! s:ToggleTerm() abort
     execute 'botright sbuffer' t
     resize 12
   else
-    botright terminal ++rows=12 ++kill=hup
+    botright terminal ++rows=12 ++kill=hup ++close
     let s:term = bufnr('')
   endif
+endfunction
+
+" extra terminal next to the current window (below or right)
+function! s:NewTerm(vert) abort
+  if exists('b:NERDTree')
+    wincmd p
+  endif
+  execute (a:vert ? 'vertical ' : '') . 'terminal ++kill=hup ++close'
 endfunction
 
 " per-folder session, used when started as `vim <dir>`
@@ -232,6 +240,18 @@ nnoremap <silent> <F2> :NERDTreeToggle<CR>
 nnoremap <silent> <F3> :TagbarToggle<CR>
 nnoremap <silent> <F4> :call <SID>ToggleTerm()<CR>
 tnoremap <silent> <F4> <C-w>:call <SID>ToggleTerm()<CR>
+nnoremap <silent> <leader>- :call <SID>NewTerm(0)<CR>
+nnoremap <silent> <leader>\ :call <SID>NewTerm(1)<CR>
+tnoremap <silent> <C-w>n <C-w>:call <SID>NewTerm(0)<CR>
+tnoremap <silent> <C-w>\ <C-w>:call <SID>NewTerm(1)<CR>
+" windows
+nnoremap <silent> <leader>s :split<CR>
+nnoremap <silent> <leader>v :vsplit<CR>
+nnoremap <C-h> <C-w>h
+nnoremap <C-j> <C-w>j
+nnoremap <C-k> <C-w>k
+nnoremap <C-l> <C-w>l
+nnoremap <silent> <leader>e :ALEDetail<CR>
 nnoremap <silent> <F12> :call <SID>GoDef()<CR>
 nnoremap <silent> gd :call <SID>GoDef()<CR>
 if s:lsp
