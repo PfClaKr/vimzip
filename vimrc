@@ -275,7 +275,9 @@ function! s:Explorer() abort
   endif
 endfunction
 
-" Ctrl+N: also offer words from every file in the git project (collected by rg in the background)
+" Ctrl+N: also offer words from the git project's source files. rg collects them in the background
+" into a sorted file and each completion greps it, so vim's memory stays flat on huge projects.
+let s:src_types = ' -t c -t cpp -t h -t py -t sh -t cmake -t make -t go -t rust -t java -t js -t ts -t lua -t vim -t md'
 function! s:Words() abort
   if (exists('s:words_job') && job_status(s:words_job) ==# 'run') || localtime() - get(s:, 'words_at', 0) < 60
     return
@@ -283,18 +285,17 @@ function! s:Words() abort
   if !executable('rg') | return | endif
   let s:words_at = localtime()
   let f = s:cache . '/words/' . substitute(getcwd(), '[/\\:]', '%', 'g') . '.txt'
-  if !exists('s:words') && filereadable(f)
+  if filereadable(f)
     call s:UseWords(f)
   endif
-  " everything, including the git root lookup, runs in the background
   let cmd = 'root=$(git -C ' . shellescape(getcwd()) . ' rev-parse --show-toplevel 2>/dev/null) || exit 1; '
-        \ . 'rg --no-filename --no-line-number --only-matching --max-filesize 1M "[A-Za-z_][A-Za-z0-9_]{2,}" "$root"'
-        \ . ' | sort -u > ' . shellescape(f . '.tmp') . ' && mv ' . shellescape(f . '.tmp') . ' ' . shellescape(f)
+        \ . 'rg --no-filename --no-line-number --only-matching --max-filesize 1M' . s:src_types
+        \ . ' "[A-Za-z_][A-Za-z0-9_]{2,39}\b" "$root" | LC_ALL=C sort -u > ' . shellescape(f . '.tmp')
+        \ . ' && mv ' . shellescape(f . '.tmp') . ' ' . shellescape(f)
   let s:words_job = job_start(['sh', '-c', cmd], {'exit_cb': {j, s -> s ? 0 : s:UseWords(f)}})
 endfunction
 function! s:UseWords(f) abort
-  if !filereadable(a:f) | return | endif
-  let s:words = readfile(a:f)
+  let s:words_file = a:f
   if stridx(&complete, 'FVimzipWords') < 0
     set complete+=FVimzipWords
   endif
@@ -303,12 +304,12 @@ function! VimzipWords(findstart, base) abort
   if a:findstart
     return match(col('.') > 1 ? getline('.')[: col('.') - 2] : '', '\k*$')
   endif
-  let n = len(a:base)
-  if n == 0 | return [] | endif
-  let ic = &ignorecase
-  let hits = filter(copy(get(s:, 'words', [])),
-        \ {_, w -> w !=# a:base && (ic ? strpart(w, 0, n) ==? a:base : strpart(w, 0, n) ==# a:base)})
-  return map(hits[: 200], {_, w -> {'word': w, 'menu': '[project]'}})
+  if len(a:base) < 2 || !filereadable(get(s:, 'words_file', ''))
+    return []
+  endif
+  let hits = systemlist('grep -m 200 ' . (&ignorecase ? '-i ' : '') . '-e '
+        \ . shellescape('^' . escape(a:base, '.*[]\^$')) . ' ' . shellescape(s:words_file))
+  return map(filter(hits, 'v:val !=# a:base'), {_, w -> {'word': w, 'menu': '[project]'}})
 endfunction
 
 " extra terminal next to the current window (below or right)
