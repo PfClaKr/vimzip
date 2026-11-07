@@ -91,6 +91,15 @@ let g:gutentags_cache_dir = s:cache . '/tags'
 " fzf
 let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --glob "!.git"'
 
+" project search: run rg only while there is a query (fzf.vim's :RG greps every line on an empty one)
+function! s:Find(query, bang) abort
+  let rg = 'rg --column --line-number --no-heading --color=always --smart-case --hidden --glob "!.git" -- '
+  let reload = '[ -z {q} ] || ' . rg . '{q} || :'
+  call fzf#vim#grep(':', fzf#vim#with_preview({'options': ['--disabled', '--query', a:query,
+    \ '--prompt', 'Find> ', '--bind', 'start:reload:' . reload, '--bind', 'change:reload:' . reload]}), a:bang)
+endfunction
+command! -bang -nargs=* Find call s:Find(<q-args>, <bang>0)
+
 " nerdtree
 let g:NERDTreeHijackNetrw = 0
 let g:NERDTreeShowHidden = 1
@@ -229,8 +238,8 @@ augroup END
 
 " keys
 nnoremap <silent> <C-p> :call <SID>Buf('Files')<CR>
-nnoremap <silent> <C-S-f> :call <SID>Buf('RG')<CR>
-nnoremap <silent> <leader>f :call <SID>Buf('RG')<CR>
+nnoremap <silent> <C-S-f> :call <SID>Buf('Find')<CR>
+nnoremap <silent> <leader>f :call <SID>Buf('Find')<CR>
 nnoremap <silent> <leader>b :call <SID>Buf('Buffers')<CR>
 nnoremap <silent> <leader>t :call <SID>Buf('Tags')<CR>
 nnoremap <silent> <Tab> :call <SID>Buf('bnext')<CR>
