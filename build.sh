@@ -14,7 +14,7 @@ for p in pack/vimzip/start/*/; do
 done
 find "$D/pack" -depth \( -name .git -o -name .github -o -name test -o -name tests \) -exec rm -rf {} +
 cp vimrc "$D/vimrc"
-cp vim "$D/vim"
+cp vim install.sh "$D/"
 
 # smoke test + help tags
 VIMZIP=$D VIMRUNTIME=$D/runtime "$D/bin/vim" -u "$D/vimrc" -i NONE -es \
