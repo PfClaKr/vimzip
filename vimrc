@@ -3,7 +3,7 @@ set nocompatible
 let &packpath = $VIMZIP . ',' . $VIMRUNTIME
 let &runtimepath = $VIMZIP . ',' . $VIMRUNTIME . ',' . $VIMRUNTIME . '/after'
 let s:cache = expand('~/.cache/vimzip')
-for s:d in ['undo', 'sessions', 'tags']
+for s:d in ['undo', 'swap', 'sessions', 'tags']
   silent! call mkdir(s:cache . '/' . s:d, 'p')
 endfor
 
@@ -31,6 +31,7 @@ set ttimeout ttimeoutlen=50 updatetime=300
 set completeopt=menuone,popup noautocomplete
 set undofile
 let &undodir = s:cache . '/undo'
+let &directory = s:cache . '/swap//'
 
 " theme
 if $COLORTERM =~# 'truecolor\|24bit'
