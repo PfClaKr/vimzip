@@ -1,0 +1,27 @@
+[submodule "pack/vimzip/start/ale"]
+	path = pack/vimzip/start/ale
+	url = https://github.com/dense-analysis/ale
+[submodule "pack/vimzip/start/vim-gutentags"]
+	path = pack/vimzip/start/vim-gutentags
+	url = https://github.com/ludovicchabant/vim-gutentags
+[submodule "pack/vimzip/start/tagbar"]
+	path = pack/vimzip/start/tagbar
+	url = https://github.com/preservim/tagbar
+[submodule "pack/vimzip/start/fzf.vim"]
+	path = pack/vimzip/start/fzf.vim
+	url = https://github.com/junegunn/fzf.vim
+[submodule "pack/vimzip/start/nerdtree"]
+	path = pack/vimzip/start/nerdtree
+	url = https://github.com/preservim/nerdtree
+[submodule "pack/vimzip/start/vim-gitgutter"]
+	path = pack/vimzip/start/vim-gitgutter
+	url = https://github.com/airblade/vim-gitgutter
+[submodule "pack/vimzip/start/vim-fugitive"]
+	path = pack/vimzip/start/vim-fugitive
+	url = https://github.com/tpope/vim-fugitive
+[submodule "pack/vimzip/start/vim-commentary"]
+	path = pack/vimzip/start/vim-commentary
+	url = https://github.com/tpope/vim-commentary
+[submodule "pack/vimzip/start/lightline.vim"]
+	path = pack/vimzip/start/lightline.vim
+	url = https://github.com/itchyny/lightline.vim
