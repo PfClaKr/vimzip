@@ -2,17 +2,36 @@
 
 압축만 풀면 쓰는 리눅스 x86-64용 vim 개발 환경. 모든 바이너리가 정적 링크라 glibc 버전과 상관없이 동작합니다.
 
-![vim .](docs/layout.png)
+## 설치
+
+```sh
+curl -fsSL https://github.com/PfClaKr/vimzip/releases/latest/download/vimzip-linux-x86_64.tar.gz | tar -xz -C ~
+~/vimzip/install.sh
+source ~/.bashrc    # zsh는 ~/.zshrc
+```
+
+`~/vimzip`에 풀고, `~/.local/bin/vim`으로 연결하고, `EDITOR=vim`을 설정합니다. root 권한은 필요 없습니다.
 
 ## 사용
 
 ```sh
-curl -LO https://github.com/PfClaKr/vimzip/releases/latest/download/vimzip-linux-x86_64.zip
-unzip vimzip-linux-x86_64.zip && ./vimzip/install.sh
-cd myproject && vim .
+cd myproject
+vim .
 ```
 
 `vim .`은 파일 트리와 편집기를 열고, 그 폴더에서 마지막으로 열었던 파일을 복원합니다. 파일은 자동 저장됩니다 (편집 모드를 나갈 때, 수정 직후, 다른 파일·창으로 옮길 때).
+
+![vim .](docs/layout.png)
+
+업데이트와 삭제:
+
+```sh
+rm -rf ~/vimzip && curl -fsSL https://github.com/PfClaKr/vimzip/releases/latest/download/vimzip-linux-x86_64.tar.gz | tar -xz -C ~
+```
+
+```sh
+rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세요
+```
 
 ## 포함
 
