@@ -131,6 +131,9 @@ endfunction
 " gutentags: keep tag files out of projects
 let g:gutentags_cache_dir = s:cache . '/tags'
 
+" gitgutter: its first git calls block while vim starts, so turn it on after the first screen
+let g:gitgutter_enabled = 0
+
 " fzf
 let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --glob "!.git"'
 
@@ -354,6 +357,7 @@ endfunction
 augroup vimzip
   autocmd!
   autocmd VimEnter * ++nested call s:Start()
+  autocmd VimEnter * call timer_start(0, {-> execute('silent! GitGutterEnable')})
   autocmd VimEnter,BufWritePost * call s:Words()
   autocmd VimLeavePre * call s:Save()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
