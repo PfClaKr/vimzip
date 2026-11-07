@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build dist/vimzip-linux-x86_64.zip
+# Build dist/vimzip-linux-x86_64.{zip,tar.gz}
 set -eu
 cd "$(dirname "$0")"
 R=$PWD
@@ -22,6 +22,7 @@ VIMZIP=$D VIMRUNTIME=$D/runtime "$D/bin/vim" -u "$D/vimrc" -i NONE -es \
 "$D/bin/vim" --version | head -n 2
 
 cd "$R/build"
-rm -f "$R/dist/vimzip-linux-x86_64.zip"
+rm -f "$R"/dist/vimzip-linux-x86_64.*
 zip -qr9 "$R/dist/vimzip-linux-x86_64.zip" vimzip
-ls -l "$R/dist/vimzip-linux-x86_64.zip"
+tar -czf "$R/dist/vimzip-linux-x86_64.tar.gz" vimzip
+ls -l "$R"/dist/vimzip-linux-x86_64.*
