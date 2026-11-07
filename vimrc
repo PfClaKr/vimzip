@@ -416,3 +416,8 @@ nnoremap <silent> <F9> :silent! ToggleBreak<CR>
 nnoremap <silent> <F10> :silent! Over<CR>
 nnoremap <silent> <F11> :silent! Step<CR>
 nnoremap <silent> <S-F11> :silent! Finish<CR>
+
+" personal overrides
+if filereadable(expand('~/.config/vimzip/vimrc'))
+  execute 'source' fnameescape(expand('~/.config/vimzip/vimrc'))
+endif
