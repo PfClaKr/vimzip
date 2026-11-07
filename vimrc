@@ -42,7 +42,10 @@ function! s:AutoSave() abort
 endfunction
 augroup vimzip_autosave
   autocmd!
-  autocmd InsertLeave,TextChanged,FocusLost,BufLeave * call s:AutoSave()
+  autocmd InsertLeave,FocusLost,BufLeave * call s:AutoSave()
+  " batch quick normal-mode edits (x, dd, ...) into one save, so linters and ctags run once
+  autocmd TextChanged * call timer_stop(get(s:, 'save_timer', -1))
+        \ | let s:save_timer = timer_start(1000, {-> mode() ==# 'n' ? s:AutoSave() : 0})
   autocmd FocusGained,BufEnter,CursorHold * silent! checktime
 augroup END
 
