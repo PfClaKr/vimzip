@@ -7,6 +7,7 @@
 ## 사용
 
 ```sh
+curl -LO https://github.com/PfClaKr/vimzip/releases/latest/download/vimzip-linux-x86_64.zip
 unzip vimzip-linux-x86_64.zip && ./vimzip/install.sh
 cd myproject && vim .
 ```
@@ -140,4 +141,4 @@ git clone --recursive https://github.com/PfClaKr/vimzip && cd vimzip
 CC=musl-gcc ./build.sh    # 그 외 (musl-tools 필요)
 ```
 
-버전은 `versions.env`. 매주 자동으로 갱신 PR이 열립니다.
+버전은 `versions.env`. 매주 자동으로 갱신 PR이 열리고, main에 들어가면 릴리스가 올라갑니다.
