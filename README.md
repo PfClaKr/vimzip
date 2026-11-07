@@ -38,6 +38,17 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 - vim (musl 정적 빌드), ctags, fzf, shellcheck, ripgrep
 - ALE, gutentags, tagbar, fzf.vim, nerdtree, nerdtree-git-plugin, gitgutter, fugitive, lightline, lightline-bufferline
 
+## VSCode와 비교
+
+| | vimzip | VSCode + C/C++ 확장 |
+|---|---|---|
+| 다운로드 | 21 MB | 357 MB (215 + 142) |
+| 설치 후 크기 | 74 MB | 1,033 MB (632 + 401) |
+| SSH 서버에 올라가는 것 | 74 MB 전부 | VS Code Server 283 MB + 확장 |
+| 서버 요구 사항 | x86-64 리눅스면 어디나 | glibc 2.28 이상 |
+
+vimzip은 C 파일을 열고 트리, 에러 검사, git 표시가 모두 켜진 상태에서 약 70 ms에 뜨고 메모리 약 30 MB를 씁니다. VSCode 쪽은 같은 소스로 빌드한 VSCodium 1.143과 cpptools 1.35의 파일 크기입니다.
+
 ## 단축키
 
 `Space`가 리더 키입니다. `Ctrl+w`로 시작하는 키는 터미널 안에서도 동작합니다.
