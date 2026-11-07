@@ -1,0 +1,8 @@
+#!/bin/sh
+# Source files for the tags index, run in the project root.
+# Projects with more than 30000 of them leave out test directories.
+set -- -t c -t cpp -t py -t sh -t go -t rust -t java -t js -t ts -t lua -t vim -t cmake
+if [ "$(rg --files "$@" | head -n 30001 | wc -l)" -gt 30000 ]; then
+  set -- "$@" -g '!**/test/**' -g '!**/tests/**'
+fi
+exec rg --files "$@"

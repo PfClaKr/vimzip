@@ -133,6 +133,8 @@ endfunction
 
 " gutentags: keep tag files out of projects
 let g:gutentags_cache_dir = s:cache . '/tags'
+" index only source files (huge projects also skip test dirs): LLVM 474 MB -> 140 MB of tags
+let g:gutentags_file_list_command = 'vimzip-files'
 
 " gitgutter: its first git calls block while vim starts, so turn it on after the first screen
 let g:gitgutter_enabled = 0
