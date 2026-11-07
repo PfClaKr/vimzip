@@ -334,6 +334,22 @@ function! s:ToggleAi() abort
   endif
 endfunction
 
+" keep the open tree pointed at the current file, like VSCode's explorer (focus stays in the editor)
+function! s:RevealInTree() abort
+  if &buftype !=# '' || !exists('g:NERDTree') || !g:NERDTree.IsOpen()
+    return
+  endif
+  let f = expand('%:p')
+  let root = g:NERDTree.ForCurrentTab().root.path.str()
+  if f ==# get(s:, 'revealed', '') || !filereadable(f) || stridx(f, root . '/') != 0
+    return
+  endif
+  let s:revealed = f
+  let w = win_getid()
+  silent! NERDTreeFind
+  call win_gotoid(w)
+endfunction
+
 " file tree like VSCode Ctrl+Shift+E: open and focus, focus, or close
 function! s:Explorer() abort
   if exists('b:NERDTree')
@@ -488,6 +504,7 @@ augroup vimzip
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
   autocmd User ALELintPost call lightline#update()
   autocmd BufEnter * if winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() | quit | endif
+  autocmd BufEnter * call s:RevealInTree()
 augroup END
 
 " keys
