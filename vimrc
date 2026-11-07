@@ -209,7 +209,7 @@ function! s:ToggleTerm() abort
   endif
   call s:EditWin()
   let s:term_from = win_getid()
-  if bufexists(t)
+  if bufexists(t) && term_getstatus(t) =~# 'running'
     execute 'botright sbuffer' t
     resize 12
   else
