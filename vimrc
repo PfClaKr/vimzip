@@ -33,6 +33,19 @@ set undofile
 let &undodir = s:cache . '/undo'
 let &directory = s:cache . '/swap//'
 
+" autosave on leaving insert mode, after normal-mode changes, and on focus/buffer change
+function! s:AutoSave() abort
+  if &modified && &buftype ==# '' && &modifiable && !&readonly && expand('%') !=# ''
+        \ && &filetype !~# '^\(gitcommit\|gitrebase\)$'
+    silent! update
+  endif
+endfunction
+augroup vimzip_autosave
+  autocmd!
+  autocmd InsertLeave,TextChanged,FocusLost,BufLeave * call s:AutoSave()
+  autocmd FocusGained,BufEnter,CursorHold * silent! checktime
+augroup END
+
 " theme
 if $COLORTERM =~# 'truecolor\|24bit'
   set termguicolors
