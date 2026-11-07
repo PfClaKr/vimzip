@@ -19,9 +19,9 @@
 [submodule "pack/vimzip/start/vim-fugitive"]
 	path = pack/vimzip/start/vim-fugitive
 	url = https://github.com/tpope/vim-fugitive
-[submodule "pack/vimzip/start/vim-commentary"]
-	path = pack/vimzip/start/vim-commentary
-	url = https://github.com/tpope/vim-commentary
 [submodule "pack/vimzip/start/lightline.vim"]
 	path = pack/vimzip/start/lightline.vim
 	url = https://github.com/itchyny/lightline.vim
+[submodule "pack/vimzip/start/lightline-bufferline"]
+	path = pack/vimzip/start/lightline-bufferline
+	url = https://github.com/mengelbrecht/lightline-bufferline
