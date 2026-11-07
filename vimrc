@@ -99,7 +99,9 @@ function! s:SysTags() abort
   if cc ==# '' | return 0 | endif
   let src = expand('%:p')
   let dirs = uniq(sort([expand('%:p:h'), expand('%:p:h:h') . '/include', getcwd(), getcwd() . '/include']))
-  let out = system(cc . ' -M -MG -w ' . join(map(dirs, '"-I" . shellescape(v:val)')) . ' ' . shellescape(src))
+  " the build's own flags (compile_commands.json from CMake etc.) via ALE, then guessed dirs
+  let flags = exists('*ale#c#GetCFlags') ? ale#c#GetCFlags(bufnr(''), []) : ''
+  let out = system(cc . ' -M -MG -w ' . flags . ' ' . join(map(dirs, '"-I" . shellescape(v:val)')) . ' ' . shellescape(src))
   let hdrs = filter(split(out), 'v:val =~# "^/" && v:val !=# src')
   if empty(hdrs) | return 0 | endif
   let f = s:cache . '/systags/' . substitute(src, '[/\\:]', '%', 'g') . '.tags'
