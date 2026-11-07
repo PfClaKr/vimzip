@@ -164,6 +164,55 @@ let g:NERDTreeGitStatusIndicatorMapCustom = {
   \ 'Modified': 'M', 'Staged': 'A', 'Untracked': 'U', 'Renamed': 'R', 'Unmerged': 'C',
   \ 'Deleted': 'D', 'Dirty': '~', 'Ignored': 'I', 'Clean': ' ', 'Unknown': '?'}
 
+" NERDTree sorts with a vimscript comparator (N log N calls): a 5500-file folder took 14 s.
+" Sort on one precomputed key per entry with vim's built-in sort instead; same order.
+function! s:NERDTreeSortChildren() dict
+  if g:NERDTreeNaturalSort || join(g:NERDTreeSortOrder) =~# '\[\['
+    return call(s:nerdtree_sort, [], self)
+  endif
+  if count(g:NERDTreeSortOrder, '*') < 1
+    call add(g:NERDTreeSortOrder, '*')
+  endif
+  let kids = self.children
+  let keys = []
+  for i in range(len(kids))
+    let k = kids[i].path.getSortKey()
+    call add(keys, printf('%04d', k[0]) . "\t" . k[-1] . "\t" . printf('%08d', i))
+  endfor
+  let self.children = map(sort(keys), {_, k -> kids[str2nr(matchstr(k, '\d\+$'))]})
+  let g:NERDTreeOldSortOrder = g:NERDTreeSortOrder
+endfunction
+" It also renders by appending to one string, which copies it once per line; collect a list.
+function! s:NERDTreeRender(depth, drawText) dict
+  let out = []
+  call s:NERDTreeRenderInto(self, a:depth, a:drawText, out)
+  return empty(out) ? '' : join(out, "\n") . "\n"
+endfunction
+function! s:NERDTreeRenderInto(node, depth, drawText, out) abort
+  if a:drawText ==# 1
+    call add(a:out, repeat('  ', a:depth - 1)
+          \ . (a:node.path.isDirectory || g:NERDTreeDirArrowExpandable ==# '' ? '' : '  ') . a:node.displayString())
+  endif
+  if a:node.path.isDirectory ==# 1 && a:node.isOpen ==# 1
+    let kids = a:node.getVisibleChildren()
+    if a:node.isCascadable() && a:depth > 0
+      call s:NERDTreeRenderInto(kids[0], a:depth, 0, a:out)
+    else
+      for k in kids
+        call s:NERDTreeRenderInto(k, a:depth + 1, 1, a:out)
+      endfor
+    endif
+  endif
+endfunction
+function! s:FastNERDTree() abort
+  if exists('g:NERDTreeDirNode') && exists('g:NERDTreeFileNode') && !exists('s:nerdtree_sort')
+    let s:nerdtree_sort = g:NERDTreeDirNode.sortChildren
+    let g:NERDTreeDirNode.sortChildren = function('s:NERDTreeSortChildren')
+    let g:NERDTreeDirNode._renderToString = function('s:NERDTreeRender')
+    let g:NERDTreeFileNode._renderToString = function('s:NERDTreeRender')
+  endif
+endfunction
+
 " termdebug
 let g:termdebug_config = {'wide': 1}
 
@@ -366,6 +415,7 @@ endfunction
 
 augroup vimzip
   autocmd!
+  autocmd VimEnter * call s:FastNERDTree()
   autocmd VimEnter * ++nested call s:Start()
   autocmd VimEnter * call timer_start(0, {-> execute('silent! GitGutterEnable')})
   autocmd VimEnter,BufWritePost * call s:Words()
