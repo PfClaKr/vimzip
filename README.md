@@ -36,7 +36,7 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 ## 포함
 
 - vim (musl 정적 빌드), ctags, fzf, shellcheck, ripgrep
-- ALE, gutentags, tagbar, fzf.vim, nerdtree, gitgutter, fugitive, lightline, lightline-bufferline
+- ALE, gutentags, tagbar, fzf.vim, nerdtree, nerdtree-git-plugin, gitgutter, fugitive, lightline, lightline-bufferline
 
 ## 단축키
 
@@ -47,7 +47,7 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 | 키 | 기능 |
 |---|---|
 | `Ctrl+p` | 파일 이름 검색 |
-| `Ctrl+Shift+f` / `Space f` | 프로젝트 전체 텍스트 검색 |
+| `Ctrl+Shift+f` / `Space f` | 프로젝트 전체 텍스트 검색 (입력하는 동안만 검색) |
 | `Space b` | 열린 파일 검색 |
 | `Space t` | 심볼(함수, 구조체) 검색 |
 | 검색 창에서 `Enter` / `Ctrl+v` / `Ctrl+x` | 열기 / 세로 분할로 열기 / 가로 분할로 열기 |
@@ -111,6 +111,7 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 | `m` | 파일 추가·이름 변경·삭제 메뉴 |
 | `I` / `R` | 숨김 파일 표시 / 새로고침 |
 | `C` / `u` | 선택한 폴더를 루트로 / 상위 폴더로 |
+| `M` `A` `U` `D` `R` `C` `~` | git 상태: 수정 / 스테이지 / 새 파일 / 삭제 / 이름 변경 / 충돌 / 안에 변경 있음 |
 
 ### 편집
 
