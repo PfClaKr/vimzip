@@ -101,7 +101,7 @@ let g:lightline#bufferline#clickable = 1
 let g:lightline#bufferline#min_buffer_count = 1
 let g:lightline.component_raw = {'buffers': 1}
 function! VimzipAle() abort
-  if !exists('*ale#statusline#Count') | return '' | endif
+  if !exists('g:loaded_ale') | return '' | endif
   let c = ale#statusline#Count(bufnr(''))
   let e = c.error + c.style_error
   return c.total ? printf('E:%d W:%d', e, c.total - e) : ''
