@@ -429,6 +429,48 @@ function! s:Save() abort
   execute 'mksession!' fnameescape(s:session)
 endfunction
 
+" switch project in place (Space p / :Project): save this one's tabs, close its tabs, terminals
+" and AI panel, then open the other folder and restore its tabs
+function! s:OpenProject(dir) abort
+  let dir = fnamemodify(expand(trim(a:dir)), ':p')
+  let dir = dir =~# '.\/$' ? dir[:-2] : dir
+  if !isdirectory(dir)
+    echohl WarningMsg | echo 'Not a folder: ' . a:dir | echohl None
+    return
+  endif
+  silent! wall
+  call s:Save()
+  for b in term_list()
+    execute 'silent! bwipeout!' b
+  endfor
+  silent! %bwipeout
+  execute 'cd' fnameescape(dir)
+  let s:session = s:SessionFile()
+  if filereadable(s:session)
+    execute 'silent! source' fnameescape(s:session)
+  endif
+  execute 'NERDTree' fnameescape(getcwd())
+  wincmd p
+  unlet! s:words_file
+  let s:words_at = 0
+  call s:Words()
+  call lightline#update()
+endfunction
+
+" recent projects = folders that have a saved session, newest first
+function! s:RecentProjects() abort
+  let files = glob(s:cache . '/sessions/*.vim', 0, 1)
+  call sort(files, {a, b -> getftime(b) - getftime(a)})
+  let dirs = map(files, {_, f -> substitute(fnamemodify(f, ':t:r'), '%', '/', 'g')})
+  return map(filter(dirs, {_, d -> isdirectory(d) && d !=# getcwd()}), {_, d -> fnamemodify(d, ':~')})
+endfunction
+function! s:PickProject() abort
+  call fzf#run(fzf#wrap({'source': s:RecentProjects(), 'sink': function('s:OpenProject'),
+        \ 'options': ['--prompt', 'Project> ', '--header', 'recent projects (or type a path)',
+        \             '--bind', 'enter:accept-or-print-query']}))
+endfunction
+command! -nargs=? -complete=dir Project if <q-args> ==# '' | call s:PickProject() | else | call s:OpenProject(<q-args>) | endif
+
 function! s:TermOpen(buf) abort
   call setbufvar(a:buf, '&buflisted', 0)
   if bufnr('') == a:buf
@@ -453,6 +495,7 @@ nnoremap <silent> <C-p> :call <SID>Buf('Files')<CR>
 nnoremap <silent> <C-S-f> :call <SID>Buf('Find')<CR>
 nnoremap <silent> <leader>f :call <SID>Buf('Find')<CR>
 nnoremap <silent> <leader>b :call <SID>Buf('Buffers')<CR>
+nnoremap <silent> <leader>p :call <SID>PickProject()<CR>
 nnoremap <silent> <leader>t :call <SID>Buf('Tags')<CR>
 nnoremap <silent> <Tab> :call <SID>Buf('bnext')<CR>
 nnoremap <silent> <S-Tab> :call <SID>Buf('bprevious')<CR>
