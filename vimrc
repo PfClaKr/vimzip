@@ -276,15 +276,17 @@ function! s:Words() abort
   if (exists('s:words_job') && job_status(s:words_job) ==# 'run') || localtime() - get(s:, 'words_at', 0) < 60
     return
   endif
-  let root = trim(system('git -C ' . shellescape(getcwd()) . ' rev-parse --show-toplevel 2>/dev/null'))
-  if v:shell_error || root ==# '' || !executable('rg')
-    return
-  endif
+  if !executable('rg') | return | endif
   let s:words_at = localtime()
-  let f = s:cache . '/words/' . substitute(root, '[/\\:]', '%', 'g') . '.txt'
-  let cmd = 'rg --no-filename --no-line-number --only-matching --max-filesize 1M "[A-Za-z_][A-Za-z0-9_]{2,}" '
-        \ . shellescape(root) . ' | sort -u > ' . shellescape(f . '.tmp') . ' && mv ' . shellescape(f . '.tmp') . ' ' . shellescape(f)
-  let s:words_job = job_start(['sh', '-c', cmd], {'exit_cb': {j, s -> s:UseWords(f)}})
+  let f = s:cache . '/words/' . substitute(getcwd(), '[/\\:]', '%', 'g') . '.txt'
+  if !exists('s:words') && filereadable(f)
+    call s:UseWords(f)
+  endif
+  " everything, including the git root lookup, runs in the background
+  let cmd = 'root=$(git -C ' . shellescape(getcwd()) . ' rev-parse --show-toplevel 2>/dev/null) || exit 1; '
+        \ . 'rg --no-filename --no-line-number --only-matching --max-filesize 1M "[A-Za-z_][A-Za-z0-9_]{2,}" "$root"'
+        \ . ' | sort -u > ' . shellescape(f . '.tmp') . ' && mv ' . shellescape(f . '.tmp') . ' ' . shellescape(f)
+  let s:words_job = job_start(['sh', '-c', cmd], {'exit_cb': {j, s -> s ? 0 : s:UseWords(f)}})
 endfunction
 function! s:UseWords(f) abort
   if !filereadable(a:f) | return | endif
