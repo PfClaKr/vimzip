@@ -218,6 +218,19 @@ function! s:ToggleTerm() abort
   endif
 endfunction
 
+" file tree like VSCode Ctrl+Shift+E: open and focus, focus, or close
+function! s:Explorer() abort
+  if exists('b:NERDTree')
+    NERDTreeClose
+  elseif g:NERDTree.IsOpen()
+    NERDTreeFocus
+  elseif &buftype ==# '' && stridx(expand('%:p'), getcwd() . '/') == 0
+    NERDTreeFind
+  else
+    NERDTreeFocus
+  endif
+endfunction
+
 " extra terminal next to the current window (below or right)
 function! s:NewTerm(vert) abort
   if exists('b:NERDTree')
@@ -293,6 +306,8 @@ inoremap <silent> <C-s> <C-o>:update<CR>
 xnoremap <silent> <C-s> <Esc>:update<CR>
 xnoremap <C-c> y
 nnoremap <silent> <F2> :NERDTreeToggle<CR>
+nnoremap <silent> <C-S-e> :call <SID>Explorer()<CR>
+tnoremap <silent> <C-S-e> <C-w>:call <SID>Explorer()<CR>
 nnoremap <silent> <F3> :TagbarToggle<CR>
 nnoremap <silent> <F4> :call <SID>ToggleTerm()<CR>
 tnoremap <silent> <F4> <C-w>:call <SID>ToggleTerm()<CR>
