@@ -3,7 +3,7 @@ set nocompatible
 let &packpath = $VIMZIP . ',' . $VIMRUNTIME
 let &runtimepath = $VIMZIP . ',' . $VIMRUNTIME . ',' . $VIMRUNTIME . '/after'
 let s:cache = expand('~/.cache/vimzip')
-for s:d in ['undo', 'swap', 'sessions', 'tags', 'systags']
+for s:d in ['undo', 'swap', 'sessions', 'tags', 'systags', 'words']
   silent! call mkdir(s:cache . '/' . s:d, 'p')
 endfor
 
@@ -231,6 +231,40 @@ function! s:Explorer() abort
   endif
 endfunction
 
+" Ctrl+N: also offer words from every file in the git project (collected by rg in the background)
+function! s:Words() abort
+  if (exists('s:words_job') && job_status(s:words_job) ==# 'run') || localtime() - get(s:, 'words_at', 0) < 60
+    return
+  endif
+  let root = trim(system('git -C ' . shellescape(getcwd()) . ' rev-parse --show-toplevel 2>/dev/null'))
+  if v:shell_error || root ==# '' || !executable('rg')
+    return
+  endif
+  let s:words_at = localtime()
+  let f = s:cache . '/words/' . substitute(root, '[/\\:]', '%', 'g') . '.txt'
+  let cmd = 'rg --no-filename --no-line-number --only-matching --max-filesize 1M "[A-Za-z_][A-Za-z0-9_]{2,}" '
+        \ . shellescape(root) . ' | sort -u > ' . shellescape(f . '.tmp') . ' && mv ' . shellescape(f . '.tmp') . ' ' . shellescape(f)
+  let s:words_job = job_start(['sh', '-c', cmd], {'exit_cb': {j, s -> s:UseWords(f)}})
+endfunction
+function! s:UseWords(f) abort
+  if !filereadable(a:f) | return | endif
+  let s:words = readfile(a:f)
+  if stridx(&complete, 'FVimzipWords') < 0
+    set complete+=FVimzipWords
+  endif
+endfunction
+function! VimzipWords(findstart, base) abort
+  if a:findstart
+    return match(col('.') > 1 ? getline('.')[: col('.') - 2] : '', '\k*$')
+  endif
+  let n = len(a:base)
+  if n == 0 | return [] | endif
+  let ic = &ignorecase
+  let hits = filter(copy(get(s:, 'words', [])),
+        \ {_, w -> w !=# a:base && (ic ? strpart(w, 0, n) ==? a:base : strpart(w, 0, n) ==# a:base)})
+  return map(hits[: 200], {_, w -> {'word': w, 'menu': '[project]'}})
+endfunction
+
 " extra terminal next to the current window (below or right)
 function! s:NewTerm(vert) abort
   if exists('b:NERDTree')
@@ -286,6 +320,7 @@ endfunction
 augroup vimzip
   autocmd!
   autocmd VimEnter * ++nested call s:Start()
+  autocmd VimEnter,BufWritePost * call s:Words()
   autocmd VimLeavePre * call s:Save()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
   autocmd User ALELintPost call lightline#update()
