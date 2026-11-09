@@ -25,6 +25,7 @@ set autoindent smarttab tabstop=4 shiftwidth=4
 set number cursorline signcolumn=yes scrolloff=5 showmatch
 set hidden autoread mouse=a belloff=all splitright splitbelow
 set laststatus=2 showtabline=2 noshowmode showcmd ruler
+set fillchars+=vert:│
 set incsearch hlsearch ignorecase smartcase
 " exact-case tag lookups can binary-search the sorted tags file (gd 540 ms -> 1 ms on LLVM)
 set tagcase=match
@@ -79,9 +80,23 @@ function! s:Highlights() abort
     execute 'source' fnameescape(f[0])
   endif
   highlight VimzipTitle ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE
-  for g in ['StatusLine', 'StatusLineNC', 'StatusLineTerm', 'StatusLineTermNC']
+  " vim fills the cell where two bottom status lines meet with StatusLine(NC): give it the bar's
+  " background (fg differs, or vim draws ^ and = there)
+  let id = hlID('VimzipBar')
+  let [cbg, gbg] = [synIDattr(id, 'bg', 'cterm'), synIDattr(id, 'bg#', 'gui')]
+  let bg = printf('ctermbg=%s guibg=%s cterm=NONE gui=NONE', empty(cbg) ? 'NONE' : cbg, empty(gbg) ? 'NONE' : gbg)
+  execute 'highlight StatusLine ctermfg=250 guifg=#bbbbbb' bg
+  execute 'highlight StatusLineNC ctermfg=245 guifg=#8a8a8a' bg
+  for g in ['StatusLineTerm', 'StatusLineTermNC']
     execute 'highlight' g 'ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE'
   endfor
+  " thin window borders
+  highlight VertSplit ctermfg=238 ctermbg=NONE guifg=#3a3a3a guibg=NONE cterm=NONE gui=NONE
+  " git change marks at the right edge of each window
+  highlight VimzipRuler ctermbg=NONE guibg=NONE
+  highlight VimzipRulerAdd ctermfg=71 ctermbg=NONE guifg=#5faf5f guibg=NONE
+  highlight VimzipRulerChange ctermfg=74 ctermbg=NONE guifg=#5fafd7 guibg=NONE
+  highlight VimzipRulerDelete ctermfg=167 ctermbg=NONE guifg=#d75f5f guibg=NONE
 endfunction
 autocmd ColorScheme * call s:Highlights()
 " theme files: ~/.config/vimzip/themes/*.vim first, then the bundled ones
@@ -502,9 +517,9 @@ let g:lightline#bufferline#clickable = 1
 let g:lightline#bufferline#min_buffer_count = 1
 let g:lightline.component_raw = {'buffers': 1}
 
-" One status bar for the whole screen in Vim green (vim has no laststatus=3 as Neovim does).
+" One status bar for the whole screen (vim has no laststatus=3 as Neovim does).
 " The status lines along the bottom edge together draw the bar for the current window: its
-" left part in the leftmost one, its right part in the rightmost, plain blue in between.
+" left part in the leftmost one, its right part in the rightmost, plain bar in between.
 " A window with another window below it gets a thin title instead (EXPLORER, TIMELINE, file).
 set laststatus=2 statusline=%!VimzipStatus()
 " the bar may sit in another window's status line, so redraw them all as the cursor or mode changes
@@ -520,9 +535,10 @@ let s:languages = {'c': 'C', 'cpp': 'C++', 'python': 'Python', 'sh': 'Shell Scri
   \ 'json': 'JSON', 'yaml': 'YAML', 'javascript': 'JavaScript', 'typescript': 'TypeScript', 'go': 'Go',
   \ 'rust': 'Rust', 'java': 'Java', 'lua': 'Lua', 'html': 'HTML', 'css': 'CSS', 'xml': 'XML', 'sql': 'SQL',
   \ 'dockerfile': 'Dockerfile', 'gitcommit': 'Git Commit', 'gitignore': 'Ignore', 'text': 'Plain Text'}
-function! VimzipProblems() abort
-  if &buftype !=# '' || !exists('g:loaded_ale') | return '' | endif
-  let c = ale#statusline#Count(bufnr(''))
+function! VimzipProblems(...) abort
+  let b = a:0 ? a:1 : bufnr('')
+  if getbufvar(b, '&buftype') !=# '' || !exists('g:loaded_ale') | return '' | endif
+  let c = ale#statusline#Count(b)
   let e = c.error + c.style_error
   return printf('E %d  W %d', e, c.total - e)
 endfunction
@@ -537,6 +553,15 @@ function! s:Esc(text) abort
   return substitute(a:text, '%', '%%', 'g')
 endfunction
 " evaluated in the current window, for the window g:statusline_winid
+" the editor the bar describes: the current window, or the last file window when a panel has focus
+" (a %! expression runs in the current window's context, so read everything through this id)
+function! s:EditorWin() abort
+  if &buftype ==# ''
+    let s:editor = win_getid()
+  endif
+  let e = get(s:, 'editor', 0)
+  return win_id2win(e) && getbufvar(winbufnr(e), '&buftype') ==# '' ? e : 0
+endfunction
 function! VimzipStatus() abort
   let w = g:statusline_winid
   let [row, col] = win_screenpos(w)
@@ -544,23 +569,27 @@ function! VimzipStatus() abort
     return '%#VimzipTitle# ' . s:Esc(s:Title(w))
   endif
   let [isleft, isright] = [col == 1, col + winwidth(w) > &columns]
+  let e = s:EditorWin()
+  let b = e ? winbufnr(e) : bufnr('')
   let left = ''
   if isleft
     let [name, group] = get(s:modes, mode(), [toupper(mode()), 'Normal'])
     let left = '%#VimzipMode' . group . '# ' . name . ' %#VimzipBar#'
-    for item in [exists('*FugitiveHead') ? FugitiveHead() : '', VimzipProblems()]
+    for item in [exists('*FugitiveHead') ? FugitiveHead(0, b) : '', VimzipProblems(b)]
       let left .= item !=# '' ? '  ' . s:Esc(item) : ''
     endfor
   endif
   let right = ''
-  if isright && &buftype ==# ''
+  if isright && e
     " drop the least useful items first when the space is short
     let room = winwidth(w) - (isleft ? strwidth(substitute(left, '%#\w\+#', '', 'g')) : 0) - 2
-    let items = [printf('Ln %d, Col %d', line('.'), virtcol('.')),
-          \ &expandtab ? 'Spaces: ' . shiftwidth() : 'Tab Size: ' . &tabstop,
-          \ toupper(&fileencoding !=# '' ? &fileencoding : &encoding),
-          \ get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, &fileformat, &fileformat),
-          \ &filetype ==# '' ? 'Plain Text' : get(s:languages, &filetype, toupper(&filetype[0]) . &filetype[1:])]
+    let [et, sw, ts] = [getbufvar(b, '&expandtab'), getbufvar(b, '&shiftwidth'), getbufvar(b, '&tabstop')]
+    let [fenc, ff, ft] = [getbufvar(b, '&fileencoding'), getbufvar(b, '&fileformat'), getbufvar(b, '&filetype')]
+    let items = [printf('Ln %d, Col %d', line('.', e), virtcol('.', 0, e)),
+          \ et ? 'Spaces: ' . (sw ? sw : ts) : 'Tab Size: ' . ts,
+          \ toupper(fenc !=# '' ? fenc : &encoding),
+          \ get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, ff, ff),
+          \ ft ==# '' ? 'Plain Text' : get(s:languages, ft, toupper(ft[0]) . ft[1:])]
     for drop in [1, 2, 3, 4]
       if strwidth(join(filter(copy(items), 'v:val !=# ""'), '  ')) <= room | break | endif
       let items[drop] = ''
@@ -836,6 +865,65 @@ function! s:TermOpen(buf) abort
     setlocal nonumber nocursorline signcolumn=no
   endif
 endfunction
+
+" git change marks at the right edge of each window, like VSCode's scrollbar: the whole file is
+" scaled to the window height; one popup per window, transparent (masked) where there is no mark
+for s:k in ['Add', 'Change', 'Delete']
+  if empty(prop_type_get('vimzip_ruler_' . s:k))
+    call prop_type_add('vimzip_ruler_' . s:k, {'highlight': 'VimzipRuler' . s:k})
+  endif
+endfor
+let s:rulers = []
+function! s:RulerLater(...) abort
+  if get(s:, 'ruler_timer', -1) < 0
+    let s:ruler_timer = timer_start(30, {-> s:Ruler()})
+  endif
+endfunction
+function! s:Ruler() abort
+  let s:ruler_timer = -1
+  call map(s:rulers, 'popup_close(v:val)')
+  let s:rulers = []
+  if !exists('g:loaded_gitgutter') | return | endif
+  for w in gettabinfo(tabpagenr())[0].windows
+    let b = winbufnr(w)
+    let hunks = getbufvar(b, '&buftype') ==# '' ? gitgutter#hunk#hunks(b) : []
+    let info = getwininfo(w)[0]
+    if empty(hunks) || info.width < 20 | continue | endif
+    let [h, n] = [info.height, max([info.height, getbufinfo(b)[0].linecount])]
+    let marks = repeat([''], h)
+    for [_, old, start, new] in hunks
+      let kind = old == 0 ? 'Add' : new == 0 ? 'Delete' : 'Change'
+      let start = max([start, 1])
+      for r in range((start - 1) * h / n, (start + max([new, 1]) - 2) * h / n)
+        if r < h && (marks[r] ==# '' || kind ==# 'Change')
+          let marks[r] = kind
+        endif
+      endfor
+    endfor
+    let text = []
+    let mask = []
+    for r in range(h)
+      if marks[r] ==# ''
+        call add(text, {'text': ' '})
+        if !empty(mask) && mask[-1][3] == r
+          let mask[-1][3] = r + 1
+        else
+          call add(mask, [1, 1, r + 1, r + 1])
+        endif
+      else
+        call add(text, {'text': '▐', 'props': [{'col': 1, 'length': 3, 'type': 'vimzip_ruler_' . marks[r]}]})
+      endif
+    endfor
+    call add(s:rulers, popup_create(text, {'line': info.winrow, 'col': info.wincol + info.width - 1,
+          \ 'minwidth': 1, 'maxwidth': 1, 'minheight': h, 'maxheight': h, 'wrap': 0, 'zindex': 1,
+          \ 'highlight': 'VimzipRuler', 'mask': mask}))
+  endfor
+endfunction
+augroup vimzip_ruler
+  autocmd!
+  autocmd User GitGutter call s:RulerLater()
+  autocmd WinResized,VimResized,WinClosed,TabEnter,BufWinEnter * call s:RulerLater()
+augroup END
 
 augroup vimzip
   autocmd!
