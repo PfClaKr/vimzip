@@ -560,6 +560,7 @@ function! s:ToggleTerm() abort
     resize 12
   else
     botright terminal ++rows=12 ++kill=hup ++close
+    call s:TermKeys()
     let s:term = bufnr('')
   endif
 endfunction
@@ -670,6 +671,15 @@ function! s:NewTerm(vert) abort
     wincmd p
   endif
   execute (a:vert ? 'vertical ' : '') . 'terminal ++kill=hup ++close'
+  call s:TermKeys()
+endfunction
+
+" paste like VSCode's terminal: copy with Ctrl+w N (or a mouse drag) then y / Ctrl+C,
+" paste with Ctrl+V, or p while still selecting. Only in vimzip's own shells: the AI panel
+" (image paste) and fzf popups use Ctrl+V themselves.
+function! s:TermKeys() abort
+  tnoremap <buffer> <silent> <C-v> <C-w>""
+  nnoremap <buffer> <silent> p i<C-w>""
 endfunction
 
 " per-folder session, used when started as `vim <dir>`
