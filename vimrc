@@ -65,6 +65,9 @@ augroup END
 function! s:Highlights() abort
   highlight VimzipTreeIgnored ctermfg=242 guifg=#666666
   highlight VimzipBlame ctermfg=243 guifg=#767676 cterm=italic gui=italic
+  highlight link VimzipTimelineFile Title
+  highlight link VimzipTimelineAge VimzipBlame
+  highlight link VimzipTimelineDirty Special
 endfunction
 autocmd ColorScheme * call s:Highlights()
 silent! colorscheme habamax
@@ -205,8 +208,161 @@ function! s:CommitPopup() abort
         \ . ' show --stat --no-color --format=' . shellescape('%h  %an, %ar%n%n%B') . ' ' . sha)
   call popup_atcursor(lines, {'border': [], 'padding': [0, 1, 0, 1], 'moved': 'any', 'maxheight': 20})
 endfunction
+" Timeline under the file tree, like VSCode (Space gt): commits that touched the current file.
+" Enter opens that commit's change as a side-by-side diff; q in the diff goes back.
+let s:tl = {'buf': -1, 'file': '', 'items': [], 'at': 0}
+function! s:AgoShort(t) abort
+  let d = localtime() - a:t
+  for [n, unit] in [[31536000, 'y'], [2592000, 'mo'], [604800, 'w'], [86400, 'd'], [3600, 'h'], [60, 'm']]
+    if d >= n | return (d / n) . unit | endif
+  endfor
+  return 'now'
+endfunction
+function! s:ToggleTimeline() abort
+  if bufwinnr(s:tl.buf) > 0
+    execute bufwinnr(s:tl.buf) . 'close'
+    return
+  endif
+  call s:EditWin()
+  let from = win_getid()
+  if g:NERDTree.IsOpen()
+    call win_gotoid(win_getid(g:NERDTree.GetWinNum()))
+  else
+    NERDTree
+  endif
+  belowright split
+  execute 'resize' max([6, (&lines - &cmdheight - 3) * 2 / 5])
+  if bufexists(s:tl.buf)
+    execute 'buffer' s:tl.buf
+  else
+    enew
+    setlocal buftype=nofile bufhidden=hide noswapfile nobuflisted nonumber norelativenumber
+    setlocal nowrap nospell signcolumn=no cursorline winfixwidth
+    silent file [Timeline]
+    setfiletype vimziptimeline
+    let s:tl.buf = bufnr('')
+    nnoremap <buffer> <silent> <CR> :call <SID>TimelineOpen()<CR>
+    nnoremap <buffer> <silent> o :call <SID>TimelineOpen()<CR>
+    nnoremap <buffer> <silent> <2-LeftMouse> :call <SID>TimelineOpen()<CR>
+  endif
+  call win_gotoid(from)
+  let s:tl.at = 0
+  call s:TimelineUpdate()
+endfunction
+function! s:TimelineUpdate() abort
+  if bufwinnr(s:tl.buf) < 0 || &buftype !=# '' || expand('%') =~# '^\a\+://'
+    return
+  endif
+  let f = expand('%:p')
+  if f ==# s:tl.file && localtime() - s:tl.at < 2
+    return
+  endif
+  let s:tl.at = localtime()
+  if !filereadable(f) || empty(FugitiveGitDir())
+    call s:TimelineRender(f, [])
+    return
+  endif
+  let [dir, name, out] = [shellescape(fnamemodify(f, ':h')), shellescape(fnamemodify(f, ':t')), []]
+  let cmd = 'cd ' . dir . ' && git status --porcelain -- ' . name . '; echo @@; git log --follow -n 300 --name-only'
+        \ . ' --format=%x01%h%x09%at%x09%an%x09%s -- ' . name
+  call job_start(['sh', '-c', cmd], {'err_io': 'null', 'out_cb': {_, l -> add(out, l)},
+        \ 'close_cb': {_ -> s:TimelineRender(f, out)}})
+endfunction
+function! s:TimelineRender(file, out) abort
+  if !bufexists(s:tl.buf)
+    return
+  endif
+  let sep = index(a:out, '@@')
+  let [items, lines] = [[], [fnamemodify(a:file, ':t')]]
+  if sep > 0 && a:out[0] !~# '^??'
+    call add(items, {'sha': ''})
+    call add(lines, '*    Uncommitted changes')
+  endif
+  for l in a:out[sep + 1 :]
+    if l[0] ==# "\x01"
+      let [sha, t, author; subject] = split(l[1:], "\t", 1)
+      call add(items, {'sha': sha, 'path': ''})
+      call add(lines, printf('%-4s %s', s:AgoShort(str2nr(t)), join(subject, "\t")))
+    elseif l !=# '' && !empty(items) && items[-1].sha !=# ''
+      let items[-1].path = l
+    endif
+  endfor
+  if len(lines) == 1
+    call add(lines, filereadable(a:file) ? '     No history yet' : '     No file')
+  endif
+  call setbufvar(s:tl.buf, '&modifiable', 1)
+  silent call deletebufline(s:tl.buf, 1, '$')
+  call setbufline(s:tl.buf, 1, lines)
+  call setbufvar(s:tl.buf, '&modifiable', 0)
+  let [s:tl.file, s:tl.items] = [a:file, items]
+endfunction
+function! s:TimelineOpen() abort
+  let i = line('.') - 2
+  if i < 0 || i >= len(s:tl.items)
+    return
+  endif
+  let it = s:tl.items[i]
+  let w = bufwinid(s:tl.file)
+  if w < 0
+    wincmd p
+    call s:EditWin()
+    execute 'edit' fnameescape(s:tl.file)
+    let w = win_getid()
+  endif
+  call win_gotoid(w)
+  let s:tl.diffwin = w
+  try
+    if it.sha ==# ''
+      Gvdiffsplit HEAD
+    else
+      execute 'Gedit' it.sha . ':' . (it.path !=# '' ? it.path : '%')
+      execute 'leftabove Gvdiffsplit' it.sha . '~1'
+    endif
+  catch
+    echohl WarningMsg | echo 'Timeline: ' . v:exception | echohl None
+  endtry
+  " old on the left, new on the right, like VSCode; past versions stay out of the tab bar
+  for d in filter(range(1, winnr('$')), 'getwinvar(v:val, "&diff")')
+    call win_execute(win_getid(d), 'nnoremap <buffer> <silent> q :call <SID>TimelineCloseDiff()<CR>')
+    if bufname(winbufnr(d)) =~# '^fugitive://'
+      call setbufvar(winbufnr(d), '&buflisted', 0)
+    endif
+  endfor
+  call lightline#update()
+endfunction
+function! s:TimelineCloseDiff() abort
+  diffoff!
+  for w in reverse(range(1, winnr('$')))
+    if win_getid(w) != get(s:tl, 'diffwin', 0) && bufname(winbufnr(w)) =~# '^fugitive://'
+      execute w . 'close'
+    endif
+  endfor
+  if win_gotoid(get(s:tl, 'diffwin', 0))
+    execute 'edit' fnameescape(s:tl.file)
+    silent! nunmap <buffer> q
+  endif
+  for b in getbufinfo()
+    if b.name =~# '^fugitive://' && empty(b.windows)
+      execute 'silent! bwipeout' b.bufnr
+    endif
+  endfor
+endfunction
+" quit when only the tree and timeline are left
+function! s:QuitIfOnlyPanels() abort
+  for w in range(1, winnr('$'))
+    let b = winbufnr(w)
+    if getbufvar(b, '&filetype') !=# 'nerdtree' && b != s:tl.buf
+      return
+    endif
+  endfor
+  qall
+endfunction
+
 augroup vimzip_blame
   autocmd!
+  autocmd BufEnter,BufWritePost * call s:TimelineUpdate()
+  autocmd FileType vimziptimeline syntax match VimzipTimelineFile /\%1l.*/
+        \ | syntax match VimzipTimelineAge /^\%>1l\S\+/ | syntax match VimzipTimelineDirty /^\*.*/
   autocmd CursorHold * call s:Blame()
   autocmd CursorMoved,CursorMovedI,InsertEnter,BufLeave * if exists('s:blame_at') | call s:BlameClear() | endif
 augroup END
@@ -333,7 +489,7 @@ function! VimzipLineinfo() abort
   return &buftype !=# '' ? '' : printf('Ln %d, Col %d', line('.'), virtcol('.'))
 endfunction
 function! VimzipFilename() abort
-  return exists('b:NERDTree') ? 'EXPLORER' : &filetype ==# 'tagbar' ? 'OUTLINE'
+  return exists('b:NERDTree') ? 'EXPLORER' : &filetype ==# 'tagbar' ? 'OUTLINE' : &filetype ==# 'vimziptimeline' ? 'TIMELINE'
         \ : &buftype ==# 'terminal' ? 'TERMINAL' : (expand('%:t') !=# '' ? expand('%:t') : '[No Name]') . (&modified ? ' +' : '')
 endfunction
 let s:languages = {'c': 'C', 'cpp': 'C++', 'python': 'Python', 'sh': 'Shell Script', 'bash': 'Shell Script',
@@ -611,7 +767,7 @@ augroup vimzip
   autocmd VimLeavePre * call s:Save()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
   autocmd User ALELintPost call lightline#update()
-  autocmd BufEnter * if winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() | quit | endif
+  autocmd BufEnter * call s:QuitIfOnlyPanels()
   autocmd BufEnter * call s:RevealInTree()
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
   " long names wrap onto the next line inside the tree instead of needing a sideways scroll
@@ -661,6 +817,7 @@ nnoremap <silent> <leader>gh :GV!<CR>
 xnoremap <silent> <leader>gh :GV<CR>
 nnoremap <silent> <leader>gl :GV<CR>
 nnoremap <silent> <leader>gs :Git<CR>
+nnoremap <silent> <leader>gt :call <SID>ToggleTimeline()<CR>
 nnoremap <silent> <F12> :call <SID>GoDef()<CR>
 nnoremap <silent> gd :call <SID>GoDef()<CR>
 if s:lsp
