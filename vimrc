@@ -42,6 +42,12 @@ let &undodir = s:cache . '/undo'
 let &directory = s:cache . '/swap//'
 
 " autosave on leaving insert mode, after normal-mode changes, and on focus/buffer change
+" saving a new file creates its folders, like VSCode
+augroup vimzip_mkdir
+  autocmd!
+  autocmd BufWritePre * if &buftype ==# '' && expand('<afile>') !~# '^\a\+://' && !isdirectory(expand('<afile>:p:h'))
+        \ | call mkdir(expand('<afile>:p:h'), 'p') | endif
+augroup END
 function! s:AutoSave() abort
   if &modified && &buftype ==# '' && &modifiable && !&readonly && expand('%') !=# ''
         \ && &filetype !~# '^\(gitcommit\|gitrebase\)$'
@@ -271,7 +277,8 @@ function! s:CommitPopup() abort
   let sha = matchstr(out[0], '^\x\+')
   let lines = sha =~# '^0\+$' ? ['Uncommitted changes'] : systemlist('git -C ' . shellescape(expand('%:p:h'))
         \ . ' show --stat --no-color --format=' . shellescape('%h  %an, %ar%n%n%B') . ' ' . sha)
-  call popup_atcursor(lines, {'border': [], 'padding': [0, 1, 0, 1], 'moved': 'any', 'maxheight': 20})
+  call popup_atcursor(lines, {'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
+        \ 'padding': [0, 1, 0, 1], 'moved': 'any', 'maxheight': 20})
 endfunction
 " Timeline under the file tree, like VSCode (Space gt): commits that touched the current file.
 " Enter opens that commit's change as a side-by-side diff; q in the diff goes back.
@@ -370,6 +377,9 @@ function! s:TimelineOpen() abort
     return
   endif
   let it = s:tl.items[i]
+  if get(s:tl, 'viewing', 0)
+    call s:TimelineCloseDiff()  " one comparison at a time
+  endif
   let w = bufwinid(s:tl.file)
   if w < 0
     wincmd p
@@ -379,12 +389,21 @@ function! s:TimelineOpen() abort
   endif
   call win_gotoid(w)
   let s:tl.diffwin = w
+  let s:tl.viewing = 1
   try
     if it.sha ==# ''
       Gvdiffsplit HEAD
     else
-      execute 'Gedit' it.sha . ':' . (it.path !=# '' ? it.path : '%')
-      execute 'leftabove Gvdiffsplit' it.sha . '~1'
+      let path = it.path !=# '' ? it.path : expand('%')
+      execute 'Gedit' fnameescape(it.sha . ':' . path)
+      " the commit that added the file has nothing to compare with: show the file as it was
+      call system('git -C ' . shellescape(fnamemodify(s:tl.file, ':h')) . ' cat-file -e ' . shellescape(it.sha . '~1:' . path))
+      if !v:shell_error
+        execute 'leftabove Gvdiffsplit' it.sha . '~1'
+      else
+        setlocal nobuflisted
+        nnoremap <buffer> <silent> q :call <SID>TimelineCloseDiff()<CR>
+      endif
     endif
   catch
     echohl WarningMsg | echo 'Timeline: ' . v:exception | echohl None
@@ -399,6 +418,7 @@ function! s:TimelineOpen() abort
   call lightline#update()
 endfunction
 function! s:TimelineCloseDiff() abort
+  let s:tl.viewing = 0
   diffoff!
   for w in reverse(range(1, winnr('$')))
     if win_getid(w) != get(s:tl, 'diffwin', 0) && bufname(winbufnr(w)) =~# '^fugitive://'
@@ -423,7 +443,15 @@ function! s:QuitIfOnlyPanels() abort
       return
     endif
   endfor
-  qall
+  " only panels are left: leave vim, unless a hidden buffer still has unsaved text; show that instead
+  let unsaved = filter(getbufinfo({'bufmodified': 1}), 'getbufvar(v:val.bufnr, "&buftype") ==# ""')
+  if empty(unsaved)
+    qall
+  else
+    execute 'botright vertical sbuffer' unsaved[0].bufnr
+    call s:Layout()
+    echohl ErrorMsg | echo 'No write since last change (:w name to save, :q! to discard)' | echohl None
+  endif
 endfunction
 
 augroup vimzip_blame
@@ -548,21 +576,30 @@ function! s:TabClick() abort
   if m.screenrow != 1 || m.winid
     return "\<LeftMouse>"
   endif
-  let line = join(map(range(1, &columns), 'screenstring(1, v:val)'), '')
-  let chars = split(line, '\zs')
-  let c = m.screencol - 1
-  if c >= len(chars) || chars[c] ==# ' '
-    return ''
-  endif
-  let [a, z] = [c, c]
-  while a > 0 && chars[a - 1] !=# ' ' | let a -= 1 | endwhile
-  while z < len(chars) - 1 && chars[z + 1] !=# ' ' | let z += 1 | endwhile
-  let label = join(chars[a : z], '')
-  for b in getbufinfo({'buflisted': 1})
-    let name = fnamemodify(b.name, ':.')
-    if label ==# fnamemodify(name, ':t') || pathshorten(name) =~# '\V\(\^\|/\)' . escape(label, '\') . '\$'
-      return ":\<C-u>call " . expand('<SID>') . "Buf('buffer " . b.bufnr . "')\<CR>"
+  " the row as text, with the screen column each character starts at (wide characters take two)
+  let [row, cols] = ['', []]
+  for c in range(1, &columns)
+    let ch = screenstring(1, c)
+    if ch !=# ''
+      let row .= ch
+      call add(cols, c)
     endif
+  endfor
+  for b in getbufinfo({'buflisted': 1})
+    " the label is the file name, or with part of its path when two tabs share a name (s/util.c)
+    let parts = split(fnamemodify(b.name, ':.'), '/')
+    for n in range(len(parts), 1, -1)
+      let label = n == 1 ? parts[-1] : pathshorten(join(parts[-n :], '/'))
+      let at = stridx(row, ' ' . label . ' ')
+      if at >= 0
+        let first = cols[strchars(row[: at]) - 1]
+        let last = cols[min([strchars(row[: at + strlen(label)]), len(cols)]) - 1]
+        if m.screencol >= first && m.screencol <= last
+          return ":\<C-u>call " . expand('<SID>') . "Buf('buffer " . b.bufnr . "')\<CR>"
+        endif
+        break
+      endif
+    endfor
   endfor
   return ''
 endfunction
@@ -602,7 +639,7 @@ function! s:Title(w) abort
   return ft ==# 'nerdtree' ? 'EXPLORER' : ft ==# 'vimziptimeline' ? 'TIMELINE' : ft ==# 'tagbar' ? 'OUTLINE'
         \ : getbufvar(b, '&buftype') ==# 'terminal' ? 'TERMINAL'
         \ : getbufvar(b, '&buftype') ==# 'quickfix' ? (get(getwininfo(a:w)[0], 'loclist') ? 'LOCATION LIST' : 'QUICKFIX')
-        \ : getbufvar(b, '&buftype') ==# 'help' ? 'HELP'
+        \ : getbufvar(b, '&buftype') ==# 'help' ? 'HELP' : ft ==# 'man' ? 'MANUAL'
         \ : (bufname(b) !=# '' ? fnamemodify(bufname(b), ':t') : '[No Name]') . (getbufvar(b, '&modified') ? ' +' : '')
 endfunction
 function! s:Esc(text) abort
@@ -771,20 +808,33 @@ endfunction
 " :q closes the current tab (buffer) like VSCode while other tabs are open; the last one quits.
 " Splits and special windows (tree, terminal, help, ...) keep the usual :q.
 function! s:Quit(bang) abort
+  if get(s:tl, 'viewing', 0) && (&diff || bufname('') =~# '^fugitive://')
+    call s:TimelineCloseDiff()  " :q in a timeline comparison goes back to the file, like q
+    return
+  endif
   let editwins = len(filter(range(1, winnr('$')), 'getwinvar(v:val, "&buftype") ==# ""'))
-  if &buftype !=# '' || editwins > 1 || len(getbufinfo({'buflisted': 1})) < 2 || (&modified && !a:bang)
+  if &buftype ==# '' && &modified && !a:bang && editwins < 2
+    " an unsaved buffer without a name (named ones are saved automatically): closing its only
+    " window would leave vim with just the panels
+    echohl ErrorMsg | echo 'No write since last change (:w name to save, :q! to discard)' | echohl None
+    return
+  endif
+  if &buftype ==# '' && a:bang
+    setlocal nomodified  " discard: keep autosave (on leaving the buffer) from writing it
+  endif
+  if &buftype !=# '' || editwins > 1 || len(getbufinfo({'buflisted': 1})) < 2
     execute 'quit' . (a:bang ? '!' : '')
     return
   endif
   let b = bufnr('')
-  if a:bang
-    setlocal nomodified  " discard: keep autosave (on leaving the buffer) from writing it
-  endif
   bprevious
   execute 'bdelete' . (a:bang ? '!' : '') b
+  redrawtabline
 endfunction
 command! -bang VimzipQuit call s:Quit(<bang>0)
 command! -bang VimzipWriteQuit update | call s:Quit(<bang>0)
+nnoremap <silent> ZZ :VimzipWriteQuit<CR>
+nnoremap <silent> ZQ :VimzipQuit!<CR>
 cnoreabbrev <expr> q getcmdtype() ==# ':' && getcmdline() ==# 'q' ? 'VimzipQuit' : 'q'
 cnoreabbrev <expr> wq getcmdtype() ==# ':' && getcmdline() ==# 'wq' ? 'VimzipWriteQuit' : 'wq'
 cnoreabbrev <expr> x getcmdtype() ==# ':' && getcmdline() ==# 'x' ? 'VimzipWriteQuit' : 'x'
@@ -1252,7 +1302,25 @@ nnoremap <silent> gd :call <SID>GoDef()<CR>
 if s:lsp
   nnoremap <silent> gr :ALEFindReferences<CR>
   nnoremap <silent> K :ALEHover<CR>
+else
+  " without clangd: references = the word searched in the project (vim's own gr would start
+  " overwriting text), K = the man page in a split instead of a full-screen shell
+  nnoremap <silent> gr :call <SID>FindText(expand('<cword>'))<CR>
+  if executable('man')
+    runtime ftplugin/man.vim
+    set keywordprg=:Man
+  else
+    nnoremap <silent> K :echo 'No documentation: clangd or man is needed'<CR>
+  endif
 endif
+" the same keys while typing or selecting (unmapped, vim would type "<F4>" into the file)
+for s:k in ['<F2>', '<F3>', '<F4>', '<F5>', '<F10>', '<F11>', '<F12>', '<C-S-f>', '<C-S-e>', '<C-M-i>']
+  execute 'imap <silent>' s:k '<Esc>' . s:k
+  if s:k !=# '<C-S-f>'
+    execute 'xmap <silent>' s:k '<Esc>' . s:k
+  endif
+endfor
+tnoremap <silent> <C-S-f> <C-w>:call <SID>Buf('Find')<CR>
 nmap ]e <Plug>(ale_next_wrap)
 nmap [e <Plug>(ale_previous_wrap)
 " debugger (termdebug): F5 start/continue, F9 breakpoint, F10 over, F11 step
@@ -1295,6 +1363,7 @@ augroup vimzip_debug
 augroup END
 nnoremap <silent> <F5> :call <SID>Debug()<CR>
 nnoremap <silent> <F9> :call <SID>ToggleBreak()<CR>
+inoremap <silent> <F9> <C-o>:call <SID>ToggleBreak()<CR>
 nnoremap <silent> <F10> :silent! Over<CR>
 nnoremap <silent> <F11> :silent! Step<CR>
 nnoremap <silent> <S-F11> :silent! Finish<CR>
