@@ -428,18 +428,20 @@ augroup END
 let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --glob "!.git"'
 
 " project search: run rg only while there is a query (fzf.vim's :RG greps every line on an empty one)
-function! s:Find(query, bang) abort
-  let rg = 'rg --column --line-number --no-heading --color=always --smart-case --hidden --glob "!.git" -- '
+function! s:Find(query, bang, ...) abort
+  " a:1: match the text as typed (no regex)
+  let rg = 'rg --column --line-number --no-heading --color=always --smart-case --hidden --glob "!.git" '
+        \ . (get(a:, 1, 0) ? '--fixed-strings ' : '') . '-- '
   let reload = '[ -z {q} ] || ' . rg . '{q} || :'
   call fzf#vim#grep(':', fzf#vim#with_preview({'options': ['--disabled', '--query', a:query,
     \ '--prompt', 'Find> ', '--bind', 'start:reload:' . reload, '--bind', 'change:reload:' . reload]}), a:bang)
 endfunction
 command! -bang -nargs=* Find call s:Find(<q-args>, <bang>0)
-" search for the selection / the word under the cursor, as plain text (regex characters escaped)
+" search for the selection / the word under the cursor, as plain text
 function! s:FindText(text) abort
   let text = split(a:text, "\n")
   call s:EditWin()
-  call s:Find(empty(text) ? '' : escape(text[0], '\.^$*+?()[]{}|'), 0)
+  call s:Find(empty(text) ? '' : text[0], 0, 1)
 endfunction
 
 " nerdtree
