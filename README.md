@@ -36,7 +36,7 @@ rm -rf ~/vimzip ~/.local/bin/vim    # ~/.bashrc의 '# vimzip' 줄도 지우세�
 ## 포함
 
 - vim (musl 정적 빌드), ctags, fzf, shellcheck, ripgrep
-- ALE, gutentags, tagbar, fzf.vim, nerdtree, nerdtree-git-plugin, gitgutter, fugitive, lightline, lightline-bufferline
+- ALE, gutentags, tagbar, fzf.vim, nerdtree, nerdtree-git-plugin, gitgutter, fugitive, gv.vim, lightline, lightline-bufferline
 
 ## VSCode와 비교
 
@@ -119,7 +119,7 @@ vimzip은 C 파일을 열고 트리, 에러 검사, git 표시가 모두 켜진 
 
 ### 파일 트리 (`Ctrl+Shift+e` / `F2`)
 
-`Ctrl+Shift+e`는 VSCode처럼 동작합니다: 닫혀 있으면 열고, 다른 창에 있으면 트리로 이동, 트리에 있으면 닫기. 트리는 지금 보고 있는 파일을 자동으로 펼쳐 가리킵니다.
+`Ctrl+Shift+e`는 VSCode처럼 동작합니다: 닫혀 있으면 열고, 다른 창에 있으면 트리로 이동, 트리에 있으면 닫기. 트리는 지금 보고 있는 파일을 자동으로 펼쳐 가리키고, `.gitignore`에 걸린 파일·폴더는 흐리게 보입니다.
 
 | 키 | 기능 |
 |---|---|
@@ -153,14 +153,21 @@ vimzip은 C 파일을 열고 트리, 에러 검사, git 표시가 모두 켜진 
 export VIMZIP_AI=codex    # 인자도 가능: VIMZIP_AI="aider --model sonnet"
 ```
 
-### Git
+### Git (GitLens처럼)
+
+커서를 잠시 멈추면 그 줄의 마지막 커밋(작성자, 시간, 메시지)이 줄 끝에 흐리게 나옵니다.
 
 | 키 | 기능 |
 |---|---|
+| `Space gb` | 줄 끝 커밋 표시 켜기 / 끄기 |
+| `Space gc` | 현재 줄 커밋 자세히 (팝업) |
+| `Space gh` | 현재 파일 히스토리 (선택 영역에서는 그 줄들의 히스토리) |
+| `Space gl` | 전체 커밋 그래프 (`Enter` 내용 보기, `q` 닫기) |
+| `Space gB` | 파일 전체 blame |
+| `Space gs` | 상태 창 (`s` 스테이지, `u` 취소, `=` diff, `cc` 커밋) |
 | `]c` / `[c` | 다음 / 이전 변경 위치 |
 | `Space hp` / `Space hs` / `Space hu` | 변경 미리보기 / 스테이지 / 되돌리기 |
-| `:Git` | 상태 창 (`s` 스테이지, `u` 취소, `=` diff, `cc` 커밋) |
-| `:Git blame` / `:Gdiffsplit` | 줄별 작성자 / 변경 비교 |
+| `:Gdiffsplit` | 변경 비교 |
 
 ### 디버그 (gdb 필요)
 
