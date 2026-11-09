@@ -24,8 +24,13 @@ set encoding=utf-8 fileencodings=ucs-bom,utf-8,cp949,latin1
 set autoindent smarttab tabstop=4 shiftwidth=4
 set number cursorline signcolumn=yes scrolloff=5 showmatch
 set hidden autoread mouse=a belloff=all splitright splitbelow
-set laststatus=2 showtabline=2 noshowmode showcmd ruler
+set laststatus=2 showtabline=2 noshowmode showcmd noruler
+" long lines wrap at word boundaries, continued under their own indent
+set linebreak breakindent breakindentopt=shift:4
 set fillchars+=vert:│
+" no window narrower than its line-number gutter: vim divides by zero (crashes) laying out a
+" window exactly that wide
+set winminwidth=12
 set incsearch hlsearch ignorecase smartcase
 " exact-case tag lookups can binary-search the sorted tags file (gd 540 ms -> 1 ms on LLVM)
 set tagcase=match
@@ -255,7 +260,7 @@ function! s:BlameShow(buf, lnum, out) abort
   endfor
   let text = a:out[0] =~# '^0\{40}' ? 'You • Uncommitted changes'
         \ : get(info, 'author', '?') . ', ' . s:Ago(str2nr(get(info, 'author-time', '0'))) . ' • ' . get(info, 'summary', '')
-  call prop_add(a:lnum, 0, {'type': 'vimzip_blame', 'bufnr': a:buf, 'text': text, 'text_align': 'after', 'text_padding_left': 4})
+  call prop_add(a:lnum, 0, {'type': 'vimzip_blame', 'bufnr': a:buf, 'text': text, 'text_align': 'after', 'text_padding_left': 4, 'text_wrap': 'truncate'})
   let s:blame_at = [a:buf, a:lnum]
 endfunction
 " commit of the current line in a popup (Space gc)
@@ -458,6 +463,9 @@ let g:NERDTreeIgnore = ['^\.git$']
 let g:NERDTreeWinSize = 30
 let g:NERDTreeStatusline = -1
 let g:tagbar_no_status_line = 1
+let g:tagbar_compact = 2
+" fzf preview beside the list, or above it when the popup is narrow
+let g:fzf_preview_window = ['right,50%,<100(up,45%)', 'ctrl-/']
 let g:NERDTreeGitStatusConcealBrackets = 1
 let g:NERDTreeGitStatusShowIgnored = 1
 let g:NERDTreeGitStatusIndicatorMapCustom = {
@@ -533,6 +541,33 @@ let g:lightline = {
 let g:lightline#bufferline#clickable = 1
 let g:lightline#bufferline#min_buffer_count = 1
 let g:lightline.component_raw = {'buffers': 1}
+" clicking a tab opens that file: Vim's tabline has no click handlers for buffers (only Neovim),
+" so read the name under the mouse and find its buffer (names shown as 's/util.c' when duplicated)
+function! s:TabClick() abort
+  let m = getmousepos()
+  if m.screenrow != 1 || m.winid
+    return "\<LeftMouse>"
+  endif
+  let line = join(map(range(1, &columns), 'screenstring(1, v:val)'), '')
+  let chars = split(line, '\zs')
+  let c = m.screencol - 1
+  if c >= len(chars) || chars[c] ==# ' '
+    return ''
+  endif
+  let [a, z] = [c, c]
+  while a > 0 && chars[a - 1] !=# ' ' | let a -= 1 | endwhile
+  while z < len(chars) - 1 && chars[z + 1] !=# ' ' | let z += 1 | endwhile
+  let label = join(chars[a : z], '')
+  for b in getbufinfo({'buflisted': 1})
+    let name = fnamemodify(b.name, ':.')
+    if label ==# fnamemodify(name, ':t') || pathshorten(name) =~# '\V\(\^\|/\)' . escape(label, '\') . '\$'
+      return ":\<C-u>call " . expand('<SID>') . "Buf('buffer " . b.bufnr . "')\<CR>"
+    endif
+  endfor
+  return ''
+endfunction
+nnoremap <silent> <expr> <LeftMouse> <SID>TabClick()
+let g:NERDTreeMouseMode = 3
 
 " One status bar for the whole screen (vim has no laststatus=3 as Neovim does).
 " The status lines along the bottom edge together draw the bar for the current window: its
@@ -544,6 +579,7 @@ augroup vimzip_status
   autocmd!
   autocmd CursorMoved,CursorMovedI,ModeChanged,WinEnter,BufEnter,TextChanged,TextChangedI * call s:BarRefresh()
   autocmd WinResized,VimResized * call s:BarRefresh()
+  autocmd VimResized * call s:Layout()
 augroup END
 let s:modes = {'n': ['NORMAL', 'Normal'], 'i': ['INSERT', 'Insert'], 'R': ['REPLACE', 'Replace'],
   \ 'v': ['VISUAL', 'Visual'], 'V': ['V-LINE', 'Visual'], "\<C-v>": ['V-BLOCK', 'Visual'],
@@ -565,6 +601,8 @@ function! s:Title(w) abort
   let ft = getbufvar(b, '&filetype')
   return ft ==# 'nerdtree' ? 'EXPLORER' : ft ==# 'vimziptimeline' ? 'TIMELINE' : ft ==# 'tagbar' ? 'OUTLINE'
         \ : getbufvar(b, '&buftype') ==# 'terminal' ? 'TERMINAL'
+        \ : getbufvar(b, '&buftype') ==# 'quickfix' ? (get(getwininfo(a:w)[0], 'loclist') ? 'LOCATION LIST' : 'QUICKFIX')
+        \ : getbufvar(b, '&buftype') ==# 'help' ? 'HELP'
         \ : (bufname(b) !=# '' ? fnamemodify(bufname(b), ':t') : '[No Name]') . (getbufvar(b, '&modified') ? ' +' : '')
 endfunction
 function! s:Esc(text) abort
@@ -588,11 +626,24 @@ endfunction
 function! s:AtBottom(w) abort
   return win_screenpos(a:w)[0] + get(getwininfo(a:w), 0, {'winbar': 0}).winbar + winheight(a:w) >= &lines - &cmdheight
 endfunction
+" the window that starts right under this one's status line, in the same column
+function! s:Below(w) abort
+  let [row, col] = win_screenpos(a:w)
+  let top = row + getwininfo(a:w)[0].winbar + winheight(a:w) + 1
+  for n in range(1, winnr('$'))
+    if win_screenpos(n) == [top, col]
+      return win_getid(n)
+    endif
+  endfor
+  return 0
+endfunction
 function! VimzipStatus() abort
   let w = g:statusline_winid
   let [row, col] = win_screenpos(w)
   if !s:AtBottom(w)
-    return '%#VimzipTitle# ' . s:Esc(s:Title(w))
+    " a title row is the header of the window below it, like VSCode's panel headers on top
+    let below = s:Below(w)
+    return '%#VimzipTitle# ' . (below ? s:Esc(s:Title(below)) : '')
   endif
   " this window's columns of the bar
   let [first, last] = [col, col + winwidth(w) - 1]
@@ -697,6 +748,9 @@ function! s:AfterClose() abort
   if index(['nerdtree', 'tagbar', 'vimziptimeline'], &filetype) >= 0 && mode() ==# 'n'
     call s:EditWin()
   endif
+  if get(s:, 'tree_hidden', 0)
+    call s:Layout()
+  endif
 endfunction
 function! s:Buf(cmd) abort
   call s:EditWin()
@@ -747,9 +801,9 @@ function! s:ToggleTerm() abort
   let s:term_from = win_getid()
   if bufexists(t) && term_getstatus(t) =~# 'running'
     execute 'botright sbuffer' t
-    resize 12
+    execute 'resize' max([6, (&lines - 4) * 3 / 10])
   else
-    botright terminal ++rows=12 ++kill=hup ++close
+    execute 'botright terminal ++rows=' . max([6, (&lines - 4) * 3 / 10]) . ' ++kill=hup ++close'
     call s:TermKeys()
     let s:term = bufnr('')
   endif
@@ -762,6 +816,7 @@ function! s:ToggleAi() abort
   if w > 0
     execute w . 'hide'
     call win_gotoid(get(s:, 'ai_from', 0))
+    call s:Layout()
     return
   endif
   let cmd = get(g:, 'vimzip_ai', $VIMZIP_AI)
@@ -774,7 +829,8 @@ function! s:ToggleAi() abort
   endif
   call s:EditWin()
   let s:ai_from = win_getid()
-  let width = max([60, &columns * 2 / 5])
+  call s:Layout('ai')
+  let width = s:PanelWidths('ai').ai
   if bufexists(t) && term_getstatus(t) =~# 'running'
     execute 'botright vertical sbuffer' t
     execute 'vertical resize' width
@@ -787,7 +843,85 @@ function! s:ToggleAi() abort
       execute 'silent! bwipeout' blank
     endif
   endif
+  call s:Layout()
 endfunction
+
+" panel sizes follow the screen: side panels shrink on small screens so the editor keeps 40
+" columns (on a very narrow screen the tree steps aside until there is room again), and the
+" terminal panel keeps about a third of the height. Runs on resize, Ctrl+w = and panel toggles.
+function! s:PanelWidths(...) abort
+  " a:1: a panel about to open ('ai' or 'tagbar'), counted as open
+  let opening = get(a:, 1, '')
+  let ft = map(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&filetype")') + [opening]
+  let ai = bufwinnr(get(s:, 'ai', -1)) > 0 || opening ==# 'ai'
+  let tree = index(ft, 'nerdtree') >= 0 || get(s:, 'tree_hidden', 0)
+  for pass in [0, 1]
+    let want = {'tree': tree ? min([30, max([20, &columns / 4])]) : 0,
+          \ 'tagbar': index(ft, 'tagbar') >= 0 ? min([40, max([24, &columns * 3 / 10])]) : 0,
+          \ 'ai': min([100, max([30, &columns * 2 / 5])])}
+    " shrink the outline first, then the tree, then the agent, until the editor has 40 columns
+    for [k, least] in [['tagbar', 24], ['tree', 20], ['ai', 30], ['tagbar', 20]]
+      let over = want.tree + want.tagbar + (ai ? want.ai : 0) - (&columns - 43)
+      if over > 0 && want[k] && (k !=# 'ai' || ai)
+        let want[k] = max([least, want[k] - over])
+      endif
+    endfor
+    " an editor under 30 columns is not usable: the tree steps aside for the right-hand panels
+    let want.fits = want.tree + want.tagbar + (ai ? want.ai : 0) <= &columns - 33
+    if want.fits || !tree || !(want.tagbar || ai)
+      let want.fits = 1
+      break
+    endif
+    let tree = 0
+  endfor
+  let want.fits = tree || !(index(ft, 'nerdtree') >= 0 || get(s:, 'tree_hidden', 0))
+  return want
+endfunction
+function! s:Layout(...) abort
+  let here = win_getid()
+  let want = s:PanelWidths(get(a:, 1, ''))
+  let g:NERDTreeWinSize = min([30, max([20, &columns / 4])])
+  let tree = filter(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&filetype") ==# "nerdtree"')
+  if !empty(tree)
+    let s:tree_hidden = 0
+    if !want.fits
+      let s:timeline_hidden = bufwinnr(s:tl.buf) > 0
+      if s:timeline_hidden
+        execute bufwinnr(s:tl.buf) . 'close'
+      endif
+      NERDTreeClose
+      let s:tree_hidden = 1
+    endif
+  elseif get(s:, 'tree_hidden', 0) && want.fits
+    let s:tree_hidden = 0
+    NERDTreeToggle
+    if get(s:, 'timeline_hidden', 0)
+      let s:timeline_hidden = 0
+      call s:ToggleTimeline()
+    endif
+  endif
+  for n in range(1, winnr('$'))
+    let [b, ft] = [winbufnr(n), getbufvar(winbufnr(n), '&filetype')]
+    let size = ft ==# 'nerdtree' ? want.tree : ft ==# 'tagbar' ? want.tagbar : b == get(s:, 'ai', -1) ? want.ai : 0
+    if size
+      call win_execute(win_getid(n), 'vertical resize ' . size)
+    elseif b == get(s:, 'term', -1)
+      call win_execute(win_getid(n), 'resize ' . max([6, (&lines - 4) * 3 / 10]))
+    endif
+  endfor
+  call win_gotoid(here)
+endfunction
+" a new side panel is opened only after the others made room for it: a window squeezed to its
+" line-number width makes vim divide by zero (crash) when it lays out long lines
+function! s:Outline() abort
+  if index(map(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&filetype")'), 'tagbar') < 0
+    call s:Layout('tagbar')
+    let g:tagbar_width = s:PanelWidths('tagbar').tagbar
+  endif
+  TagbarToggle
+  call s:Layout()
+endfunction
+nnoremap <silent> <C-w>= :wincmd =<Bar>call <SID>Layout()<CR>
 
 " keep the open tree pointed at the current file, like VSCode's explorer (focus stays in the editor)
 function! s:RevealInTree() abort
@@ -896,6 +1030,7 @@ function! s:Start() abort
   endif
   NERDTree
   wincmd p
+  call s:Layout()
 endfunction
 
 function! s:Save() abort
@@ -1030,6 +1165,8 @@ augroup vimzip
   autocmd WinClosed * call timer_start(0, {-> s:AfterClose()})
   " q closes fugitive's status and blame windows too (its own key is gq)
   autocmd FileType fugitive,fugitiveblame nmap <buffer> <silent> q gq
+  " git's versions of a file (diffs, blame, history) stay out of the tabs
+  autocmd BufReadPost fugitive://* setlocal nobuflisted
   autocmd BufEnter * call s:RevealInTree()
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
   " long names stay on one line, cut with … (the selected one is shown whole, see s:TreeHover)
@@ -1085,7 +1222,7 @@ tnoremap <silent> <C-S-e> <C-w>:call <SID>Explorer()<CR>
 nnoremap <silent> <C-M-i> :call <SID>ToggleAi()<CR>
 tnoremap <silent> <C-M-i> <C-w>:call <SID>ToggleAi()<CR>
 nnoremap <silent> <leader>a :call <SID>ToggleAi()<CR>
-nnoremap <silent> <F3> :TagbarToggle<CR>
+nnoremap <silent> <F3> :call <SID>Outline()<CR>
 nnoremap <silent> <F4> :call <SID>ToggleTerm()<CR>
 tnoremap <silent> <F4> <C-w>:call <SID>ToggleTerm()<CR>
 nnoremap <silent> <leader>- :call <SID>NewTerm(0)<CR>
