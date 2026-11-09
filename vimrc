@@ -146,6 +146,10 @@ let g:ale_linters = {
 let g:ale_lint_on_text_changed = 'never'
 let g:ale_lint_on_insert_leave = 0
 let g:ale_completion_enabled = 0
+" Space e / K: details in a popup at the cursor instead of a split
+let g:ale_detail_to_floating_preview = 1
+let g:ale_hover_to_floating_preview = 1
+let g:ale_floating_window_border = ['│', '─', '╭', '╮', '╯', '╰', '│', '─']
 if s:lsp
   autocmd FileType c,cpp setlocal omnifunc=ale#completion#OmniFunc
 endif
@@ -204,6 +208,8 @@ let g:gutentags_file_list_command = 'vimzip-files'
 
 " gitgutter: its first git calls block while vim starts, so turn it on after the first screen
 let g:gitgutter_enabled = 0
+" Space hp: the hunk in a popup at the cursor
+let g:gitgutter_preview_win_floating = 1
 
 " GitLens-like: blame of the current line shown faintly after its end (Space gb toggles)
 let g:vimzip_blame = get(g:, 'vimzip_blame', 1)
@@ -578,10 +584,14 @@ function! s:EditorWin() abort
   let files = filter(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&buftype") ==# ""')
   return empty(files) ? 0 : win_getid(files[0])
 endfunction
+" the window's status line is on the screen's last row (a winbar, like the debugger's, adds a row)
+function! s:AtBottom(w) abort
+  return win_screenpos(a:w)[0] + get(getwininfo(a:w), 0, {'winbar': 0}).winbar + winheight(a:w) >= &lines - &cmdheight
+endfunction
 function! VimzipStatus() abort
   let w = g:statusline_winid
   let [row, col] = win_screenpos(w)
-  if row + winheight(w) < &lines - &cmdheight
+  if !s:AtBottom(w)
     return '%#VimzipTitle# ' . s:Esc(s:Title(w))
   endif
   " this window's columns of the bar
@@ -643,7 +653,7 @@ function! s:BarJoins() abort
   for n in range(1, winnr('$'))
     let [r, c] = win_screenpos(n)
     let j = c + winwidth(n)
-    if r + winheight(n) < &lines - &cmdheight || j > &columns
+    if !s:AtBottom(win_getid(n)) || j > &columns
       " not on the bottom edge (any more): back to the global value
       if getwinvar(n, 'vimzip_fcs', '') !=# ''
         call setwinvar(n, '&fillchars', '')
@@ -673,7 +683,19 @@ endfunction
 " switch/close buffers without touching the tree or terminal windows
 function! s:EditWin() abort
   if &buftype !=# '' || exists('b:NERDTree')
-    wincmd p
+    let e = s:EditorWin()
+    if e
+      call win_gotoid(e)
+    else
+      wincmd p
+    endif
+  endif
+endfunction
+" when a window closes (a terminal exits, a split is closed) and vim lands in a side panel,
+" go back to the editor
+function! s:AfterClose() abort
+  if index(['nerdtree', 'tagbar', 'vimziptimeline'], &filetype) >= 0 && mode() ==# 'n'
+    call s:EditWin()
   endif
 endfunction
 function! s:Buf(cmd) abort
@@ -1005,6 +1027,9 @@ augroup vimzip
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
   autocmd User ALELintPost call s:BarRefresh()
   autocmd BufEnter * call s:QuitIfOnlyPanels()
+  autocmd WinClosed * call timer_start(0, {-> s:AfterClose()})
+  " q closes fugitive's status and blame windows too (its own key is gq)
+  autocmd FileType fugitive,fugitiveblame nmap <buffer> <silent> q gq
   autocmd BufEnter * call s:RevealInTree()
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
   " long names stay on one line, cut with … (the selected one is shown whole, see s:TreeHover)
@@ -1100,8 +1125,38 @@ function! s:Debug() abort
     call feedkeys(':TermdebugCommand ', 'n')
   endif
 endfunction
+" breakpoints set before the debugger runs are kept as signs and handed to gdb when it starts;
+" then the program runs right away (stopping at them) and the cursor goes back to the source
+highlight default VimzipBreak ctermfg=167 guifg=#d75f5f
+call sign_define('vimzip_break', {'text': '●', 'texthl': 'VimzipBreak'})
+function! s:ToggleBreak() abort
+  if exists(':ToggleBreak') == 2
+    ToggleBreak
+    return
+  endif
+  let placed = sign_getplaced(bufnr(''), {'group': 'vimzip_break', 'lnum': line('.')})[0].signs
+  if empty(placed)
+    call sign_place(0, 'vimzip_break', 'vimzip_break', bufnr(''), {'lnum': line('.'), 'priority': 120})
+  else
+    call sign_unplace('vimzip_break', {'buffer': bufnr(''), 'id': placed[0].id})
+  endif
+endfunction
+function! s:DebugStarted() abort
+  for b in getbufinfo({'buflisted': 1})
+    for sign in sign_getplaced(b.bufnr, {'group': 'vimzip_break'})[0].signs
+      execute 'Break' fnameescape(fnamemodify(b.name, ':p')) . ':' . sign.lnum
+    endfor
+  endfor
+  call sign_unplace('vimzip_break')
+  Run
+  Source
+endfunction
+augroup vimzip_debug
+  autocmd!
+  autocmd User TermdebugStartPost call s:DebugStarted()
+augroup END
 nnoremap <silent> <F5> :call <SID>Debug()<CR>
-nnoremap <silent> <F9> :silent! ToggleBreak<CR>
+nnoremap <silent> <F9> :call <SID>ToggleBreak()<CR>
 nnoremap <silent> <F10> :silent! Over<CR>
 nnoremap <silent> <F11> :silent! Step<CR>
 nnoremap <silent> <S-F11> :silent! Finish<CR>
