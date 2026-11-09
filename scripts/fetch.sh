@@ -7,7 +7,9 @@ OUT=$(mkdir -p "$1/bin" && cd "$1" && pwd)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 gh=https://github.com
-get() { mkdir -p "$W/$1"; curl -fsSL "$2" | tar -x${3}f - -C "$W/$1"; }
+# GitHub sometimes answers 5xx for a moment: retry, then extract from a complete file
+dl() { curl -fsSL --retry 12 --retry-all-errors --retry-delay 15 -o "$1" "$2"; }
+get() { mkdir -p "$W/$1"; dl "$W/$1.tar" "$2"; tar -x${3}f "$W/$1.tar" -C "$W/$1"; }
 
 d=${CTAGS_VERSION%%+*}
 get ctags "$gh/universal-ctags/ctags-nightly-build/releases/download/$(echo "$CTAGS_VERSION" | sed 's/+/%2B/')/uctags-$d-linux-x86_64.release.tar.xz" J
@@ -19,4 +21,4 @@ cp "$W"/ctags/*/bin/ctags "$W"/ctags/*/bin/readtags "$W/fzf/fzf" "$W"/sc/*/shell
 
 # fzf vim plugin, matching the binary version
 mkdir -p "$OUT/pack/vimzip/start/fzf/plugin"
-curl -fsSL "https://raw.githubusercontent.com/junegunn/fzf/$FZF_VERSION/plugin/fzf.vim" -o "$OUT/pack/vimzip/start/fzf/plugin/fzf.vim"
+dl "$OUT/pack/vimzip/start/fzf/plugin/fzf.vim" "https://raw.githubusercontent.com/junegunn/fzf/$FZF_VERSION/plugin/fzf.vim"

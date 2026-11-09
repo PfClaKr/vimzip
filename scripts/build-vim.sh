@@ -9,8 +9,15 @@ J=$(nproc)
 W=$(mktemp -d)
 trap 'rm -rf "$W"' EXIT
 
-git clone -q --depth 1 -b "$NCURSES_VERSION" https://github.com/ThomasDickey/ncurses-snapshots "$W/ncurses"
-git clone -q --depth 1 -b "$VIM_VERSION" https://github.com/vim/vim "$W/vim"
+clone() {  # retry: GitHub has short outages
+  for i in 1 2 3 4; do
+    git clone -q --depth 1 -b "$1" "$2" "$3" && return 0
+    rm -rf "$3"; sleep $((i * 5))
+  done
+  return 1
+}
+clone "$NCURSES_VERSION" https://github.com/ThomasDickey/ncurses-snapshots "$W/ncurses"
+clone "$VIM_VERSION" https://github.com/vim/vim "$W/vim"
 
 cd "$W/ncurses"
 ./configure -q CC="$CC" --prefix="$W/nc" \
