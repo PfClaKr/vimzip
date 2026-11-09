@@ -162,6 +162,7 @@ export VIMZIP_AI=codex    # 인자도 가능: VIMZIP_AI="aider --model sonnet"
 |---|---|
 | `Space gb` | 줄 끝 커밋 표시 켜기 / 끄기 |
 | `Space gc` | 현재 줄 커밋 자세히 (팝업) |
+| `Space gt` | 트리 아래 타임라인 열기 / 닫기 (현재 파일의 커밋 목록, `Enter`로 그 커밋의 변경 비교, `q`로 돌아오기) |
 | `Space gh` | 현재 파일 히스토리 (선택 영역에서는 그 줄들의 히스토리) |
 | `Space gl` | 전체 커밋 그래프 (`Enter` 내용 보기, `q` 닫기) |
 | `Space gB` | 파일 전체 blame |
@@ -194,6 +195,8 @@ export VIMZIP_AI=codex    # 인자도 가능: VIMZIP_AI="aider --model sonnet"
 | ![search](docs/search.png) | ![files](docs/files.png) |
 | **함수 목록 + 터미널** | **디버그** |
 | ![panels](docs/panels.png) | ![debug](docs/debug.png) |
+| **타임라인** | **타임라인에서 커밋 비교** |
+| ![timeline](docs/timeline.png) | ![timeline diff](docs/timeline-diff.png) |
 
 ## 빌드
 
