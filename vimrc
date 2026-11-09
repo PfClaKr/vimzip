@@ -62,6 +62,10 @@ augroup vimzip_bg
   autocmd ColorScheme * for s:g in ['Normal', 'NonText', 'EndOfBuffer', 'SignColumn', 'LineNr', 'FoldColumn']
         \ | execute 'highlight' s:g 'ctermbg=NONE guibg=NONE' | endfor
 augroup END
+function! s:Highlights() abort
+  highlight VimzipTreeIgnored ctermfg=242 guifg=#666666
+endfunction
+autocmd ColorScheme * call s:Highlights()
 silent! colorscheme habamax
 
 " clipboard over SSH (OSC 52): yanks also go to the local clipboard
@@ -162,9 +166,17 @@ let g:NERDTreeMinimalUI = 1
 let g:NERDTreeIgnore = ['^\.git$']
 let g:NERDTreeWinSize = 30
 let g:NERDTreeGitStatusConcealBrackets = 1
+let g:NERDTreeGitStatusShowIgnored = 1
 let g:NERDTreeGitStatusIndicatorMapCustom = {
   \ 'Modified': 'M', 'Staged': 'A', 'Untracked': 'U', 'Renamed': 'R', 'Unmerged': 'C',
-  \ 'Deleted': 'D', 'Dirty': '~', 'Ignored': 'I', 'Clean': ' ', 'Unknown': '?'}
+  \ 'Deleted': 'D', 'Dirty': '~', 'Ignored': nr2char(160), 'Clean': ' ', 'Unknown': '?'}
+" gitignored entries are drawn dimmed like VSCode; their indicator is a no-break space, so it
+" shows as blank yet can be matched
+function! s:TreeIgnoredSyntax() abort
+  execute 'syntax match VimzipTreeIgnored #\[ *\%d160 *\]\%d' . char2nr(g:NERDTreeNodeDelimiter) . '.*#'
+        \ . ' contains=NERDTreeFlags containedin=NERDTreeFile,NERDTreeExecFile,NERDTreeDir,NERDTreeLinkFile,NERDTreeLinkDir'
+endfunction
+
 
 " NERDTree sorts with a vimscript comparator (N log N calls): a 5500-file folder took 14 s.
 " Sort on one precomputed key per entry with vim's built-in sort instead; same order.
@@ -505,6 +517,7 @@ augroup vimzip
   autocmd User ALELintPost call lightline#update()
   autocmd BufEnter * if winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() | quit | endif
   autocmd BufEnter * call s:RevealInTree()
+  autocmd FileType nerdtree call s:TreeIgnoredSyntax()
 augroup END
 
 " keys
