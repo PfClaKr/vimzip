@@ -68,11 +68,11 @@ function! s:Highlights() abort
   highlight link VimzipTimelineFile Title
   highlight link VimzipTimelineAge VimzipBlame
   highlight link VimzipTimelineDirty Special
-  highlight VimzipBar ctermfg=15 ctermbg=32 guifg=#ffffff guibg=#007acc
-  highlight VimzipModeNormal ctermfg=15 ctermbg=24 guifg=#ffffff guibg=#005f87
-  highlight VimzipModeInsert ctermfg=15 ctermbg=29 guifg=#ffffff guibg=#16825d
-  highlight VimzipModeVisual ctermfg=15 ctermbg=97 guifg=#ffffff guibg=#8a3fbf
-  highlight VimzipModeReplace ctermfg=15 ctermbg=160 guifg=#ffffff guibg=#c72e0f
+  highlight VimzipBar ctermfg=15 ctermbg=28 guifg=#ffffff guibg=#008700
+  highlight VimzipModeNormal ctermfg=15 ctermbg=22 guifg=#ffffff guibg=#005f00
+  highlight VimzipModeInsert ctermfg=15 ctermbg=25 guifg=#ffffff guibg=#005faf
+  highlight VimzipModeVisual ctermfg=15 ctermbg=91 guifg=#ffffff guibg=#8700af
+  highlight VimzipModeReplace ctermfg=15 ctermbg=124 guifg=#ffffff guibg=#af0000
   highlight VimzipTitle ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE
   for g in ['StatusLine', 'StatusLineNC', 'StatusLineTerm', 'StatusLineTermNC']
     execute 'highlight' g 'ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE'
@@ -475,7 +475,7 @@ let g:lightline#bufferline#clickable = 1
 let g:lightline#bufferline#min_buffer_count = 1
 let g:lightline.component_raw = {'buffers': 1}
 
-" One status bar for the whole screen, like VSCode (vim has no laststatus=3 as Neovim does).
+" One status bar for the whole screen in Vim green (vim has no laststatus=3 as Neovim does).
 " The status lines along the bottom edge together draw the bar for the current window: its
 " left part in the leftmost one, its right part in the rightmost, plain blue in between.
 " A window with another window below it gets a thin title instead (EXPLORER, TIMELINE, file).
