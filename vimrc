@@ -68,17 +68,44 @@ function! s:Highlights() abort
   highlight link VimzipTimelineFile Title
   highlight link VimzipTimelineAge VimzipBlame
   highlight link VimzipTimelineDirty Special
-  highlight VimzipBar ctermfg=15 ctermbg=28 guifg=#ffffff guibg=#008700
-  highlight VimzipModeNormal ctermfg=15 ctermbg=22 guifg=#ffffff guibg=#005f00
-  highlight VimzipModeInsert ctermfg=15 ctermbg=25 guifg=#ffffff guibg=#005faf
-  highlight VimzipModeVisual ctermfg=15 ctermbg=91 guifg=#ffffff guibg=#8700af
-  highlight VimzipModeReplace ctermfg=15 ctermbg=124 guifg=#ffffff guibg=#af0000
+  " status bar: built-in gray, or a theme file (themes/*.vim) picked by g:vimzip_theme
+  highlight VimzipBar ctermfg=252 ctermbg=238 guifg=#d0d0d0 guibg=#444444 cterm=NONE gui=NONE
+  highlight VimzipModeNormal ctermfg=235 ctermbg=250 guifg=#1c1c1c guibg=#bcbcbc cterm=bold gui=bold
+  highlight VimzipModeInsert ctermfg=235 ctermbg=110 guifg=#1c1c1c guibg=#87afd7 cterm=bold gui=bold
+  highlight VimzipModeVisual ctermfg=235 ctermbg=179 guifg=#1c1c1c guibg=#d7af5f cterm=bold gui=bold
+  highlight VimzipModeReplace ctermfg=235 ctermbg=167 guifg=#1c1c1c guibg=#d75f5f cterm=bold gui=bold
+  let f = filter(VimzipThemes(), 'fnamemodify(v:val, ":t:r") ==# get(g:, "vimzip_theme", "gray")')
+  if !empty(f)
+    execute 'source' fnameescape(f[0])
+  endif
   highlight VimzipTitle ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE
   for g in ['StatusLine', 'StatusLineNC', 'StatusLineTerm', 'StatusLineTermNC']
     execute 'highlight' g 'ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE'
   endfor
 endfunction
 autocmd ColorScheme * call s:Highlights()
+" theme files: ~/.config/vimzip/themes/*.vim first, then the bundled ones
+function! VimzipThemes(...) abort
+  let files = globpath(expand('~/.config/vimzip/themes') . ',' . $VIMZIP . '/themes', '*.vim', 0, 1)
+  if !a:0
+    return files
+  endif
+  let names = uniq(sort(map(files, 'fnamemodify(v:val, ":t:r")')))
+  return a:0 == 3 ? filter(names, 'stridx(v:val, a:1) == 0') : names
+endfunction
+" :Theme lists themes, :Theme nord switches (keep it with let g:vimzip_theme in ~/.config/vimzip/vimrc)
+function! s:Theme(name) abort
+  if empty(a:name)
+    echo join(VimzipThemes(1), '  ')
+  elseif index(VimzipThemes(1), a:name) < 0
+    echohl ErrorMsg | echo 'No theme: ' . a:name | echohl None
+  else
+    let g:vimzip_theme = a:name
+    call s:Highlights()
+    redrawstatus!
+  endif
+endfunction
+command! -bar -nargs=? -complete=customlist,VimzipThemes Theme call s:Theme(<q-args>)
 silent! colorscheme habamax
 
 " clipboard over SSH (OSC 52): yanks also go to the local clipboard
@@ -896,3 +923,4 @@ nnoremap <silent> <S-F11> :silent! Finish<CR>
 if filereadable(expand('~/.config/vimzip/vimrc'))
   execute 'source' fnameescape(expand('~/.config/vimzip/vimrc'))
 endif
+call s:Highlights()

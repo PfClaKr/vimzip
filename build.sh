@@ -18,7 +18,7 @@ cp vimrc "$D/vimrc"
 rm -rf "$D/runtime/tutor" "$D"/runtime/spell/*.ascii.* "$D"/runtime/spell/*.latin1.*
 cp vim install.sh "$D/"
 cp vimzip-files "$D/bin/"
-cp -r autoload "$D/"
+cp -r autoload themes "$D/"
 
 # smoke test + help tags
 VIMZIP=$D VIMRUNTIME=$D/runtime "$D/bin/vim" -u "$D/vimrc" -i NONE -es \
