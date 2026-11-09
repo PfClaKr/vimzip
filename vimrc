@@ -937,8 +937,34 @@ augroup vimzip
   autocmd BufEnter * call s:QuitIfOnlyPanels()
   autocmd BufEnter * call s:RevealInTree()
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
-  " long names wrap onto the next line inside the tree instead of needing a sideways scroll
-  autocmd FileType nerdtree setlocal wrap nolinebreak breakindent breakindentopt=shift:3
+  " long names stay on one line, cut with … (the selected one is shown whole, see s:TreeHover)
+  autocmd FileType nerdtree setlocal nowrap list listchars=extends:…
+augroup END
+
+" the selected tree line, when too long for the tree, shown whole in a popup laid over it
+function! s:TreeHoverClose() abort
+  if get(s:, 'hover', 0)
+    call popup_close(s:hover)
+    let s:hover = 0
+  endif
+endfunction
+function! s:TreeHover() abort
+  call s:TreeHoverClose()
+  let line = getline('.')
+  " what is drawn: without the node delimiters and the git flag's brackets (concealed)
+  let shown = substitute(substitute(line, '\[\([^\]]*\)\]', '\1', ''), g:NERDTreeNodeDelimiter, '', 'g')
+  let info = getwininfo(win_getid())[0]
+  if strdisplaywidth(shown) < info.width - info.textoff || winsaveview().leftcol
+    return
+  endif
+  let s:hover = popup_create(line, {'line': info.winrow + winline() - 1, 'col': info.wincol + info.textoff,
+        \ 'highlight': 'CursorLine', 'zindex': 50, 'wrap': 0, 'padding': [0, 1, 0, 0]})
+  call win_execute(s:hover, 'setlocal syntax=nerdtree conceallevel=3 concealcursor=nvic | call s:TreeIgnoredSyntax()')
+endfunction
+augroup vimzip_hover
+  autocmd!
+  autocmd CursorMoved,TextChanged,WinScrolled,WinEnter * if &filetype ==# 'nerdtree' | call s:TreeHover() | endif
+  autocmd WinLeave * call s:TreeHoverClose()
 augroup END
 
 " keys
