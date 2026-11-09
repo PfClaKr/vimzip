@@ -435,6 +435,12 @@ function! s:Find(query, bang) abort
     \ '--prompt', 'Find> ', '--bind', 'start:reload:' . reload, '--bind', 'change:reload:' . reload]}), a:bang)
 endfunction
 command! -bang -nargs=* Find call s:Find(<q-args>, <bang>0)
+" search for the selection / the word under the cursor, as plain text (regex characters escaped)
+function! s:FindText(text) abort
+  let text = split(a:text, "\n")
+  call s:EditWin()
+  call s:Find(empty(text) ? '' : escape(text[0], '\.^$*+?()[]{}|'), 0)
+endfunction
 
 " nerdtree
 let g:NERDTreeHijackNetrw = 0
@@ -1033,6 +1039,9 @@ augroup END
 nnoremap <silent> <C-p> :call <SID>Buf('Files')<CR>
 nnoremap <silent> <C-S-f> :call <SID>Buf('Find')<CR>
 nnoremap <silent> <leader>f :call <SID>Buf('Find')<CR>
+nnoremap <silent> <leader>F :call <SID>FindText(expand('<cword>'))<CR>
+xnoremap <silent> <C-S-f> <Esc>:call <SID>FindText(join(getregion(getpos("'<"), getpos("'>"), {'type': visualmode()}), "\n"))<CR>
+xnoremap <silent> <leader>f <Esc>:call <SID>FindText(join(getregion(getpos("'<"), getpos("'>"), {'type': visualmode()}), "\n"))<CR>
 nnoremap <silent> <leader>b :call <SID>Buf('Buffers')<CR>
 nnoremap <silent> <leader>p :call <SID>PickProject()<CR>
 nnoremap <silent> <leader>t :call <SID>Buf('Tags')<CR>
