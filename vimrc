@@ -80,18 +80,21 @@ function! s:Highlights() abort
     execute 'source' fnameescape(f[0])
   endif
   highlight VimzipTitle ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE
-  " vim fills the cell where two bottom status lines meet with StatusLine(NC): give it the bar's
-  " background (fg differs, or vim draws ^ and = there)
+  " vim fills the cell where two bottom status lines meet with StatusLine(NC): the bar's colors
+  " (the two must still differ, or vim draws ^ and = there; nocombine changes nothing visible)
   let id = hlID('VimzipBar')
-  let [cbg, gbg] = [synIDattr(id, 'bg', 'cterm'), synIDattr(id, 'bg#', 'gui')]
-  let bg = printf('ctermbg=%s guibg=%s cterm=NONE gui=NONE', empty(cbg) ? 'NONE' : cbg, empty(gbg) ? 'NONE' : gbg)
-  execute 'highlight StatusLine ctermfg=250 guifg=#bbbbbb' bg
-  execute 'highlight StatusLineNC ctermfg=245 guifg=#8a8a8a' bg
+  let c = map(['fg', 'bg'], 'synIDattr(id, v:val, "cterm")')
+  let g = map(['fg#', 'bg#'], 'synIDattr(id, v:val, "gui")')
+  let colors = printf('ctermfg=%s ctermbg=%s guifg=%s guibg=%s', c[0], c[1], g[0], g[1])
+  let colors = substitute(colors, '=\ze\( \|$\)', '=NONE', 'g')
+  execute 'highlight StatusLine' colors 'cterm=NONE gui=NONE'
+  execute 'highlight StatusLineNC' colors 'cterm=nocombine gui=nocombine'
   for g in ['StatusLineTerm', 'StatusLineTermNC']
     execute 'highlight' g 'ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE'
   endfor
   " thin window borders
   highlight VertSplit ctermfg=238 ctermbg=NONE guifg=#3a3a3a guibg=NONE cterm=NONE gui=NONE
+  highlight VertSplitNC ctermfg=238 ctermbg=NONE guifg=#3a3a3a guibg=NONE cterm=NONE gui=NONE
   " git change marks at the right edge of each window
   highlight VimzipRuler ctermbg=NONE guibg=NONE
   highlight VimzipRulerAdd ctermfg=71 ctermbg=NONE guifg=#5faf5f guibg=NONE
@@ -525,7 +528,8 @@ set laststatus=2 statusline=%!VimzipStatus()
 " the bar may sit in another window's status line, so redraw them all as the cursor or mode changes
 augroup vimzip_status
   autocmd!
-  autocmd CursorMoved,CursorMovedI,ModeChanged,WinEnter,BufEnter,TextChanged,TextChangedI * redrawstatus!
+  autocmd CursorMoved,CursorMovedI,ModeChanged,WinEnter,BufEnter,TextChanged,TextChangedI * call s:BarRefresh()
+  autocmd WinResized,VimResized * call s:BarRefresh()
 augroup END
 let s:modes = {'n': ['NORMAL', 'Normal'], 'i': ['INSERT', 'Insert'], 'R': ['REPLACE', 'Replace'],
   \ 'v': ['VISUAL', 'Visual'], 'V': ['V-LINE', 'Visual'], "\<C-v>": ['V-BLOCK', 'Visual'],
@@ -560,7 +564,11 @@ function! s:EditorWin() abort
     let s:editor = win_getid()
   endif
   let e = get(s:, 'editor', 0)
-  return win_id2win(e) && getbufvar(winbufnr(e), '&buftype') ==# '' ? e : 0
+  if win_id2win(e) && getbufvar(winbufnr(e), '&buftype') ==# ''
+    return e
+  endif
+  let files = filter(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&buftype") ==# ""')
+  return empty(files) ? 0 : win_getid(files[0])
 endfunction
 function! VimzipStatus() abort
   let w = g:statusline_winid
@@ -568,36 +576,90 @@ function! VimzipStatus() abort
   if row + winheight(w) < &lines - &cmdheight
     return '%#VimzipTitle# ' . s:Esc(s:Title(w))
   endif
-  let [isleft, isright] = [col == 1, col + winwidth(w) > &columns]
+  " this window's columns of the bar
+  let [first, last] = [col, col + winwidth(w) - 1]
+  let out = '%#VimzipBar#'
+  let pos = first
+  for [x, text, group] in s:BarLayout()
+    let [start, stop] = [max([x, first]), min([x + strwidth(text) - 1, last])]
+    if start <= stop
+      let out .= repeat(' ', start - pos) . '%#' . group . '#'
+            \ . s:Esc(strcharpart(text, start - x, stop - start + 1)) . '%#VimzipBar#'
+      let pos = stop + 1
+    endif
+  endfor
+  return out
+endfunction
+
+" the bar laid out for the whole screen width: [[column, text, group], ...]
+function! s:BarLayout() abort
   let e = s:EditorWin()
   let b = e ? winbufnr(e) : bufnr('')
-  let left = ''
-  if isleft
-    let [name, group] = get(s:modes, mode(), [toupper(mode()), 'Normal'])
-    let left = '%#VimzipMode' . group . '# ' . name . ' %#VimzipBar#'
-    for item in [exists('*FugitiveHead') ? FugitiveHead(0, b) : '', VimzipProblems(b)]
-      let left .= item !=# '' ? '  ' . s:Esc(item) : ''
-    endfor
+  let [name, group] = get(s:modes, mode(), [toupper(mode()), 'Normal'])
+  let placed = [[1, ' ' . name . ' ', 'VimzipMode' . group]]
+  let x = strwidth(placed[0][1]) + 3
+  for item in [exists('*FugitiveHead') ? FugitiveHead(0, b) : '', VimzipProblems(b)]
+    if item !=# ''
+      call add(placed, [x, item, 'VimzipBar'])
+      let x += strwidth(item) + 2
+    endif
+  endfor
+  if !e
+    return placed
   endif
-  let right = ''
-  if isright && e
-    " drop the least useful items first when the space is short
-    let room = winwidth(w) - (isleft ? strwidth(substitute(left, '%#\w\+#', '', 'g')) : 0) - 2
-    let [et, sw, ts] = [getbufvar(b, '&expandtab'), getbufvar(b, '&shiftwidth'), getbufvar(b, '&tabstop')]
-    let [fenc, ff, ft] = [getbufvar(b, '&fileencoding'), getbufvar(b, '&fileformat'), getbufvar(b, '&filetype')]
-    let items = [printf('Ln %d, Col %d', line('.', e), virtcol('.', 0, e)),
-          \ et ? 'Spaces: ' . (sw ? sw : ts) : 'Tab Size: ' . ts,
-          \ toupper(fenc !=# '' ? fenc : &encoding),
-          \ get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, ff, ff),
-          \ ft ==# '' ? 'Plain Text' : get(s:languages, ft, toupper(ft[0]) . ft[1:])]
-    for drop in [1, 2, 3, 4]
-      if strwidth(join(filter(copy(items), 'v:val !=# ""'), '  ')) <= room | break | endif
+  let [et, sw, ts] = [getbufvar(b, '&expandtab'), getbufvar(b, '&shiftwidth'), getbufvar(b, '&tabstop')]
+  let [fenc, ff, ft] = [getbufvar(b, '&fileencoding'), getbufvar(b, '&fileformat'), getbufvar(b, '&filetype')]
+  let items = [printf('Ln %d, Col %d', line('.', e), virtcol('.', 0, e)),
+        \ et ? 'Spaces: ' . (sw ? sw : ts) : 'Tab Size: ' . ts,
+        \ toupper(fenc !=# '' ? fenc : &encoding),
+        \ get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, ff, ff),
+        \ ft ==# '' ? 'Plain Text' : get(s:languages, ft, toupper(ft[0]) . ft[1:])]
+  " right-aligned with one space at the end; drop the least useful items first when short of room
+  for drop in [0, 1, 2, 3, 4]
+    if drop
       let items[drop] = ''
       if drop == 2 | let items[3] = '' | endif
+    endif
+    let right = join(filter(copy(items), 'v:val !=# ""'), '  ')
+    if &columns - strwidth(right) > x
+      return placed + [[&columns - strwidth(right), right, 'VimzipBar']]
+    endif
+  endfor
+  return placed
+endfunction
+
+" vim draws the cell where two bottom status lines meet itself, with 'fillchars' stl/stlnc:
+" set that window-locally to the bar's character there so the bar reads as one line
+function! s:BarJoins() abort
+  let layout = s:BarLayout()
+  for n in range(1, winnr('$'))
+    let [r, c] = win_screenpos(n)
+    let j = c + winwidth(n)
+    if r + winheight(n) < &lines - &cmdheight || j > &columns
+      " not on the bottom edge (any more): back to the global value
+      if getwinvar(n, 'vimzip_fcs', '') !=# ''
+        call setwinvar(n, '&fillchars', '')
+        call setwinvar(n, 'vimzip_fcs', '')
+      endif
+      continue
+    endif
+    let ch = ' '
+    for [x, text, _] in layout
+      if j >= x && j < x + strwidth(text)
+        let ch = strcharpart(text, j - x, 1)
+      endif
     endfor
-    let right = s:Esc(join(filter(items, 'v:val !=# ""'), '  ')) . ' '
-  endif
-  return '%#VimzipBar#' . left . '%=' . right
+    let ch = ch =~# '^[,\\ ]\=$' || strwidth(ch) != 1 ? ' ' : ch
+    let fcs = substitute(&g:fillchars, ',\=stl\(nc\)\=:[^,]*', '', 'g') . ',stl:' . ch . ',stlnc:' . ch
+    if getwinvar(n, 'vimzip_fcs', '') !=# fcs
+      call setwinvar(n, '&fillchars', fcs)
+      call setwinvar(n, 'vimzip_fcs', fcs)
+    endif
+  endfor
+endfunction
+function! s:BarRefresh() abort
+  call s:BarJoins()
+  redrawstatus!
 endfunction
 
 " switch/close buffers without touching the tree or terminal windows
@@ -933,7 +995,7 @@ augroup vimzip
   autocmd VimEnter,BufWritePost * call s:Words()
   autocmd VimLeavePre * call s:Save()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
-  autocmd User ALELintPost redrawstatus!
+  autocmd User ALELintPost call s:BarRefresh()
   autocmd BufEnter * call s:QuitIfOnlyPanels()
   autocmd BufEnter * call s:RevealInTree()
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
