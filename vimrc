@@ -293,24 +293,57 @@ endfunction
 " termdebug
 let g:termdebug_config = {'wide': 1}
 
-" lightline + buffer tabs
+" status bar like VSCode: [mode] branch, problems ... Ln/Col, indent, encoding, EOL, language
 let g:lightline = {
-  \ 'colorscheme': 'wombat',
+  \ 'colorscheme': 'vimzip',
+  \ 'separator': {'left': '', 'right': ''}, 'subseparator': {'left': '', 'right': ''},
   \ 'active': {
-  \   'left': [['mode', 'paste'], ['gitbranch', 'readonly', 'filename', 'modified']],
-  \   'right': [['ale', 'lineinfo'], ['percent'], ['fileformat', 'fileencoding', 'filetype']]},
+  \   'left': [['mode', 'paste'], ['gitbranch'], ['problems']],
+  \   'right': [['filetype'], ['fileformat'], ['fileencoding'], ['indent'], ['lineinfo']]},
+  \ 'inactive': {'left': [['filename']], 'right': [['lineinfo']]},
   \ 'tabline': {'left': [['buffers']], 'right': [[]]},
   \ 'component_expand': {'buffers': 'lightline#bufferline#buffers'},
   \ 'component_type': {'buffers': 'tabsel'},
-  \ 'component_function': {'gitbranch': 'FugitiveHead', 'ale': 'VimzipAle'}}
+  \ 'component_function': {'gitbranch': 'FugitiveHead', 'problems': 'VimzipProblems', 'indent': 'VimzipIndent',
+  \   'fileencoding': 'VimzipEncoding', 'fileformat': 'VimzipEol', 'filetype': 'VimzipLanguage',
+  \   'lineinfo': 'VimzipLineinfo', 'filename': 'VimzipFilename'}}
 let g:lightline#bufferline#clickable = 1
 let g:lightline#bufferline#min_buffer_count = 1
 let g:lightline.component_raw = {'buffers': 1}
-function! VimzipAle() abort
-  if !exists('g:loaded_ale') | return '' | endif
+function! VimzipProblems() abort
+  if &buftype !=# '' || !exists('g:loaded_ale') | return '' | endif
   let c = ale#statusline#Count(bufnr(''))
   let e = c.error + c.style_error
-  return c.total ? printf('E:%d W:%d', e, c.total - e) : ''
+  return printf('E %d  W %d', e, c.total - e)
+endfunction
+" in narrow windows the right-hand items drop out first (indent, then encoding/EOL, then language)
+function! s:Show(width) abort
+  return &buftype ==# '' && winwidth(0) >= a:width
+endfunction
+function! VimzipIndent() abort
+  return !s:Show(100) ? '' : &expandtab ? 'Spaces: ' . shiftwidth() : 'Tab Size: ' . &tabstop
+endfunction
+function! VimzipEncoding() abort
+  return !s:Show(80) ? '' : toupper(&fileencoding !=# '' ? &fileencoding : &encoding)
+endfunction
+function! VimzipEol() abort
+  return !s:Show(80) ? '' : get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, &fileformat, &fileformat)
+endfunction
+function! VimzipLineinfo() abort
+  return &buftype !=# '' ? '' : printf('Ln %d, Col %d', line('.'), virtcol('.'))
+endfunction
+function! VimzipFilename() abort
+  return exists('b:NERDTree') ? 'EXPLORER' : &filetype ==# 'tagbar' ? 'OUTLINE'
+        \ : &buftype ==# 'terminal' ? 'TERMINAL' : (expand('%:t') !=# '' ? expand('%:t') : '[No Name]') . (&modified ? ' +' : '')
+endfunction
+let s:languages = {'c': 'C', 'cpp': 'C++', 'python': 'Python', 'sh': 'Shell Script', 'bash': 'Shell Script',
+  \ 'zsh': 'Shell Script', 'make': 'Makefile', 'cmake': 'CMake', 'markdown': 'Markdown', 'vim': 'Vim Script',
+  \ 'json': 'JSON', 'yaml': 'YAML', 'javascript': 'JavaScript', 'typescript': 'TypeScript', 'go': 'Go',
+  \ 'rust': 'Rust', 'java': 'Java', 'lua': 'Lua', 'html': 'HTML', 'css': 'CSS', 'xml': 'XML', 'sql': 'SQL',
+  \ 'dockerfile': 'Dockerfile', 'gitcommit': 'Git Commit', 'gitignore': 'Ignore', 'text': 'Plain Text'}
+function! VimzipLanguage() abort
+  if !s:Show(60) | return '' | endif
+  return &filetype ==# '' ? 'Plain Text' : get(s:languages, &filetype, toupper(&filetype[0]) . &filetype[1:])
 endfunction
 
 " switch/close buffers without touching the tree or terminal windows
