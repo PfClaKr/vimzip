@@ -614,6 +614,8 @@ augroup vimzip
   autocmd BufEnter * if winnr('$') == 1 && exists('b:NERDTree') && b:NERDTree.isTabTree() | quit | endif
   autocmd BufEnter * call s:RevealInTree()
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
+  " long names wrap onto the next line inside the tree instead of needing a sideways scroll
+  autocmd FileType nerdtree setlocal wrap nolinebreak breakindent breakindentopt=shift:3
 augroup END
 
 " keys
