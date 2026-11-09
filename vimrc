@@ -68,6 +68,15 @@ function! s:Highlights() abort
   highlight link VimzipTimelineFile Title
   highlight link VimzipTimelineAge VimzipBlame
   highlight link VimzipTimelineDirty Special
+  highlight VimzipBar ctermfg=15 ctermbg=32 guifg=#ffffff guibg=#007acc
+  highlight VimzipModeNormal ctermfg=15 ctermbg=24 guifg=#ffffff guibg=#005f87
+  highlight VimzipModeInsert ctermfg=15 ctermbg=29 guifg=#ffffff guibg=#16825d
+  highlight VimzipModeVisual ctermfg=15 ctermbg=97 guifg=#ffffff guibg=#8a3fbf
+  highlight VimzipModeReplace ctermfg=15 ctermbg=160 guifg=#ffffff guibg=#c72e0f
+  highlight VimzipTitle ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE
+  for g in ['StatusLine', 'StatusLineNC', 'StatusLineTerm', 'StatusLineTermNC']
+    execute 'highlight' g 'ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE'
+  endfor
 endfunction
 autocmd ColorScheme * call s:Highlights()
 silent! colorscheme habamax
@@ -258,7 +267,10 @@ function! s:TimelineUpdate() abort
     return
   endif
   let s:tl.at = localtime()
-  if !filereadable(f) || empty(FugitiveGitDir())
+  if !filereadable(f)
+    return
+  endif
+  if empty(FugitiveGitDir())
     call s:TimelineRender(f, [])
     return
   endif
@@ -385,6 +397,8 @@ let g:NERDTreeShowHidden = 1
 let g:NERDTreeMinimalUI = 1
 let g:NERDTreeIgnore = ['^\.git$']
 let g:NERDTreeWinSize = 30
+let g:NERDTreeStatusline = -1
+let g:tagbar_no_status_line = 1
 let g:NERDTreeGitStatusConcealBrackets = 1
 let g:NERDTreeGitStatusShowIgnored = 1
 let g:NERDTreeGitStatusIndicatorMapCustom = {
@@ -449,57 +463,85 @@ endfunction
 " termdebug
 let g:termdebug_config = {'wide': 1}
 
-" status bar like VSCode: [mode] branch, problems ... Ln/Col, indent, encoding, EOL, language
+" lightline draws only the tab bar; the status bar is ours (below)
 let g:lightline = {
   \ 'colorscheme': 'vimzip',
+  \ 'enable': {'statusline': 0, 'tabline': 1},
   \ 'separator': {'left': '', 'right': ''}, 'subseparator': {'left': '', 'right': ''},
-  \ 'active': {
-  \   'left': [['mode', 'paste'], ['gitbranch'], ['problems']],
-  \   'right': [['filetype'], ['fileformat'], ['fileencoding'], ['indent'], ['lineinfo']]},
-  \ 'inactive': {'left': [['filename']], 'right': [['lineinfo']]},
   \ 'tabline': {'left': [['buffers']], 'right': [[]]},
   \ 'component_expand': {'buffers': 'lightline#bufferline#buffers'},
-  \ 'component_type': {'buffers': 'tabsel'},
-  \ 'component_function': {'gitbranch': 'FugitiveHead', 'problems': 'VimzipProblems', 'indent': 'VimzipIndent',
-  \   'fileencoding': 'VimzipEncoding', 'fileformat': 'VimzipEol', 'filetype': 'VimzipLanguage',
-  \   'lineinfo': 'VimzipLineinfo', 'filename': 'VimzipFilename'}}
+  \ 'component_type': {'buffers': 'tabsel'}}
 let g:lightline#bufferline#clickable = 1
 let g:lightline#bufferline#min_buffer_count = 1
 let g:lightline.component_raw = {'buffers': 1}
+
+" One status bar for the whole screen, like VSCode (vim has no laststatus=3 as Neovim does).
+" The status lines along the bottom edge together draw the bar for the current window: its
+" left part in the leftmost one, its right part in the rightmost, plain blue in between.
+" A window with another window below it gets a thin title instead (EXPLORER, TIMELINE, file).
+set laststatus=2 statusline=%!VimzipStatus()
+" the bar may sit in another window's status line, so redraw them all as the cursor or mode changes
+augroup vimzip_status
+  autocmd!
+  autocmd CursorMoved,CursorMovedI,ModeChanged,WinEnter,BufEnter,TextChanged,TextChangedI * redrawstatus!
+augroup END
+let s:modes = {'n': ['NORMAL', 'Normal'], 'i': ['INSERT', 'Insert'], 'R': ['REPLACE', 'Replace'],
+  \ 'v': ['VISUAL', 'Visual'], 'V': ['V-LINE', 'Visual'], "\<C-v>": ['V-BLOCK', 'Visual'],
+  \ 's': ['SELECT', 'Visual'], 'S': ['S-LINE', 'Visual'], 'c': ['COMMAND', 'Normal'], 't': ['TERMINAL', 'Insert']}
+let s:languages = {'c': 'C', 'cpp': 'C++', 'python': 'Python', 'sh': 'Shell Script', 'bash': 'Shell Script',
+  \ 'zsh': 'Shell Script', 'make': 'Makefile', 'cmake': 'CMake', 'markdown': 'Markdown', 'vim': 'Vim Script',
+  \ 'json': 'JSON', 'yaml': 'YAML', 'javascript': 'JavaScript', 'typescript': 'TypeScript', 'go': 'Go',
+  \ 'rust': 'Rust', 'java': 'Java', 'lua': 'Lua', 'html': 'HTML', 'css': 'CSS', 'xml': 'XML', 'sql': 'SQL',
+  \ 'dockerfile': 'Dockerfile', 'gitcommit': 'Git Commit', 'gitignore': 'Ignore', 'text': 'Plain Text'}
 function! VimzipProblems() abort
   if &buftype !=# '' || !exists('g:loaded_ale') | return '' | endif
   let c = ale#statusline#Count(bufnr(''))
   let e = c.error + c.style_error
   return printf('E %d  W %d', e, c.total - e)
 endfunction
-" in narrow windows the right-hand items drop out first (indent, then encoding/EOL, then language)
-function! s:Show(width) abort
-  return &buftype ==# '' && winwidth(0) >= a:width
+function! s:Title(w) abort
+  let b = winbufnr(a:w)
+  let ft = getbufvar(b, '&filetype')
+  return ft ==# 'nerdtree' ? 'EXPLORER' : ft ==# 'vimziptimeline' ? 'TIMELINE' : ft ==# 'tagbar' ? 'OUTLINE'
+        \ : getbufvar(b, '&buftype') ==# 'terminal' ? 'TERMINAL'
+        \ : (bufname(b) !=# '' ? fnamemodify(bufname(b), ':t') : '[No Name]') . (getbufvar(b, '&modified') ? ' +' : '')
 endfunction
-function! VimzipIndent() abort
-  return !s:Show(100) ? '' : &expandtab ? 'Spaces: ' . shiftwidth() : 'Tab Size: ' . &tabstop
+function! s:Esc(text) abort
+  return substitute(a:text, '%', '%%', 'g')
 endfunction
-function! VimzipEncoding() abort
-  return !s:Show(80) ? '' : toupper(&fileencoding !=# '' ? &fileencoding : &encoding)
-endfunction
-function! VimzipEol() abort
-  return !s:Show(80) ? '' : get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, &fileformat, &fileformat)
-endfunction
-function! VimzipLineinfo() abort
-  return &buftype !=# '' ? '' : printf('Ln %d, Col %d', line('.'), virtcol('.'))
-endfunction
-function! VimzipFilename() abort
-  return exists('b:NERDTree') ? 'EXPLORER' : &filetype ==# 'tagbar' ? 'OUTLINE' : &filetype ==# 'vimziptimeline' ? 'TIMELINE'
-        \ : &buftype ==# 'terminal' ? 'TERMINAL' : (expand('%:t') !=# '' ? expand('%:t') : '[No Name]') . (&modified ? ' +' : '')
-endfunction
-let s:languages = {'c': 'C', 'cpp': 'C++', 'python': 'Python', 'sh': 'Shell Script', 'bash': 'Shell Script',
-  \ 'zsh': 'Shell Script', 'make': 'Makefile', 'cmake': 'CMake', 'markdown': 'Markdown', 'vim': 'Vim Script',
-  \ 'json': 'JSON', 'yaml': 'YAML', 'javascript': 'JavaScript', 'typescript': 'TypeScript', 'go': 'Go',
-  \ 'rust': 'Rust', 'java': 'Java', 'lua': 'Lua', 'html': 'HTML', 'css': 'CSS', 'xml': 'XML', 'sql': 'SQL',
-  \ 'dockerfile': 'Dockerfile', 'gitcommit': 'Git Commit', 'gitignore': 'Ignore', 'text': 'Plain Text'}
-function! VimzipLanguage() abort
-  if !s:Show(60) | return '' | endif
-  return &filetype ==# '' ? 'Plain Text' : get(s:languages, &filetype, toupper(&filetype[0]) . &filetype[1:])
+" evaluated in the current window, for the window g:statusline_winid
+function! VimzipStatus() abort
+  let w = g:statusline_winid
+  let [row, col] = win_screenpos(w)
+  if row + winheight(w) < &lines - &cmdheight
+    return '%#VimzipTitle# ' . s:Esc(s:Title(w))
+  endif
+  let [isleft, isright] = [col == 1, col + winwidth(w) > &columns]
+  let left = ''
+  if isleft
+    let [name, group] = get(s:modes, mode(), [toupper(mode()), 'Normal'])
+    let left = '%#VimzipMode' . group . '# ' . name . ' %#VimzipBar#'
+    for item in [exists('*FugitiveHead') ? FugitiveHead() : '', VimzipProblems()]
+      let left .= item !=# '' ? '  ' . s:Esc(item) : ''
+    endfor
+  endif
+  let right = ''
+  if isright && &buftype ==# ''
+    " drop the least useful items first when the space is short
+    let room = winwidth(w) - (isleft ? strwidth(substitute(left, '%#\w\+#', '', 'g')) : 0) - 2
+    let items = [printf('Ln %d, Col %d', line('.'), virtcol('.')),
+          \ &expandtab ? 'Spaces: ' . shiftwidth() : 'Tab Size: ' . &tabstop,
+          \ toupper(&fileencoding !=# '' ? &fileencoding : &encoding),
+          \ get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, &fileformat, &fileformat),
+          \ &filetype ==# '' ? 'Plain Text' : get(s:languages, &filetype, toupper(&filetype[0]) . &filetype[1:])]
+    for drop in [1, 2, 3, 4]
+      if strwidth(join(filter(copy(items), 'v:val !=# ""'), '  ')) <= room | break | endif
+      let items[drop] = ''
+      if drop == 2 | let items[3] = '' | endif
+    endfor
+    let right = s:Esc(join(filter(items, 'v:val !=# ""'), '  ')) . ' '
+  endif
+  return '%#VimzipBar#' . left . '%=' . right
 endfunction
 
 " switch/close buffers without touching the tree or terminal windows
@@ -776,7 +818,7 @@ augroup vimzip
   autocmd VimEnter,BufWritePost * call s:Words()
   autocmd VimLeavePre * call s:Save()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
-  autocmd User ALELintPost call lightline#update()
+  autocmd User ALELintPost redrawstatus!
   autocmd BufEnter * call s:QuitIfOnlyPanels()
   autocmd BufEnter * call s:RevealInTree()
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
