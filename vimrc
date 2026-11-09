@@ -64,6 +64,7 @@ augroup vimzip_bg
 augroup END
 function! s:Highlights() abort
   highlight VimzipTreeIgnored ctermfg=242 guifg=#666666
+  highlight VimzipBlame ctermfg=243 guifg=#767676 cterm=italic gui=italic
 endfunction
 autocmd ColorScheme * call s:Highlights()
 silent! colorscheme habamax
@@ -147,6 +148,69 @@ let g:gutentags_file_list_command = 'vimzip-files'
 " gitgutter: its first git calls block while vim starts, so turn it on after the first screen
 let g:gitgutter_enabled = 0
 
+" GitLens-like: blame of the current line shown faintly after its end (Space gb toggles)
+let g:vimzip_blame = get(g:, 'vimzip_blame', 1)
+silent! call prop_type_add('vimzip_blame', {'highlight': 'VimzipBlame'})
+function! s:Ago(t) abort
+  let d = localtime() - a:t
+  for [n, unit] in [[31536000, 'year'], [2592000, 'month'], [604800, 'week'], [86400, 'day'], [3600, 'hour'], [60, 'minute']]
+    if d >= n
+      let k = d / n
+      return k . ' ' . unit . (k > 1 ? 's' : '') . ' ago'
+    endif
+  endfor
+  return 'just now'
+endfunction
+function! s:BlameClear() abort
+  if exists('s:blame_at') && bufexists(s:blame_at[0])
+    silent! call prop_remove({'type': 'vimzip_blame', 'bufnr': s:blame_at[0], 'all': 1}, s:blame_at[1])
+  endif
+  unlet! s:blame_at
+endfunction
+function! s:Blame() abort
+  call s:BlameClear()
+  if !g:vimzip_blame || &buftype !=# '' || &modified || !filereadable(expand('%:p')) || empty(FugitiveGitDir())
+    return
+  endif
+  if exists('s:blame_job') && job_status(s:blame_job) ==# 'run'
+    call job_stop(s:blame_job)
+  endif
+  let [buf, lnum, out] = [bufnr(''), line('.'), []]
+  let s:blame_job = job_start(['git', '-C', expand('%:p:h'), 'blame', '--porcelain', '-L', lnum . ',' . lnum, '--', expand('%:t')],
+        \ {'err_io': 'null', 'out_cb': {_, l -> add(out, l)}, 'close_cb': {_ -> s:BlameShow(buf, lnum, out)}})
+endfunction
+function! s:BlameShow(buf, lnum, out) abort
+  if empty(a:out) || bufnr('') != a:buf || line('.') != a:lnum || mode() !=# 'n'
+    return
+  endif
+  let info = {}
+  for l in a:out[1:]
+    let m = matchlist(l, '^\(author\|author-time\|summary\) \(.*\)$')
+    if !empty(m)
+      let info[m[1]] = m[2]
+    endif
+  endfor
+  let text = a:out[0] =~# '^0\{40}' ? 'You • Uncommitted changes'
+        \ : get(info, 'author', '?') . ', ' . s:Ago(str2nr(get(info, 'author-time', '0'))) . ' • ' . get(info, 'summary', '')
+  call prop_add(a:lnum, 0, {'type': 'vimzip_blame', 'bufnr': a:buf, 'text': text, 'text_align': 'after', 'text_padding_left': 4})
+  let s:blame_at = [a:buf, a:lnum]
+endfunction
+" commit of the current line in a popup (Space gc)
+function! s:CommitPopup() abort
+  let out = systemlist('git -C ' . shellescape(expand('%:p:h')) . ' blame --porcelain -L ' . line('.') . ',' . line('.')
+        \ . ' -- ' . shellescape(expand('%:t')))
+  if v:shell_error || empty(out) | return | endif
+  let sha = matchstr(out[0], '^\x\+')
+  let lines = sha =~# '^0\+$' ? ['Uncommitted changes'] : systemlist('git -C ' . shellescape(expand('%:p:h'))
+        \ . ' show --stat --no-color --format=' . shellescape('%h  %an, %ar%n%n%B') . ' ' . sha)
+  call popup_atcursor(lines, {'border': [], 'padding': [0, 1, 0, 1], 'moved': 'any', 'maxheight': 20})
+endfunction
+augroup vimzip_blame
+  autocmd!
+  autocmd CursorHold * call s:Blame()
+  autocmd CursorMoved,CursorMovedI,InsertEnter,BufLeave * if exists('s:blame_at') | call s:BlameClear() | endif
+augroup END
+
 " fzf
 let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --glob "!.git"'
 
@@ -176,7 +240,6 @@ function! s:TreeIgnoredSyntax() abort
   execute 'syntax match VimzipTreeIgnored #\[ *\%d160 *\]\%d' . char2nr(g:NERDTreeNodeDelimiter) . '.*#'
         \ . ' contains=NERDTreeFlags containedin=NERDTreeFile,NERDTreeExecFile,NERDTreeDir,NERDTreeLinkFile,NERDTreeLinkDir'
 endfunction
-
 
 " NERDTree sorts with a vimscript comparator (N log N calls): a 5500-file folder took 14 s.
 " Sort on one precomputed key per entry with vim's built-in sort instead; same order.
@@ -555,6 +618,14 @@ nnoremap <C-j> <C-w>j
 nnoremap <C-k> <C-w>k
 nnoremap <C-l> <C-w>l
 nnoremap <silent> <leader>e :ALEDetail<CR>
+" git (GitLens-like)
+nnoremap <silent> <leader>gb :let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
+nnoremap <silent> <leader>gB :Git blame<CR>
+nnoremap <silent> <leader>gc :call <SID>CommitPopup()<CR>
+nnoremap <silent> <leader>gh :GV!<CR>
+xnoremap <silent> <leader>gh :GV<CR>
+nnoremap <silent> <leader>gl :GV<CR>
+nnoremap <silent> <leader>gs :Git<CR>
 nnoremap <silent> <F12> :call <SID>GoDef()<CR>
 nnoremap <silent> gd :call <SID>GoDef()<CR>
 if s:lsp

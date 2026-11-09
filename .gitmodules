@@ -28,3 +28,6 @@
 [submodule "pack/vimzip/start/nerdtree-git-plugin"]
 	path = pack/vimzip/start/nerdtree-git-plugin
 	url = https://github.com/Xuyuanp/nerdtree-git-plugin
+[submodule "pack/vimzip/start/gv.vim"]
+	path = pack/vimzip/start/gv.vim
+	url = https://github.com/junegunn/gv.vim
