@@ -189,6 +189,17 @@ export VIMZIP_AI=codex    # 인자도 가능: VIMZIP_AI="aider --model sonnet"
   ```
 - 개인 설정은 `~/.config/vimzip/vimrc`에 넣으면 마지막에 읽습니다.
 
+## 상태바 색
+
+`~/.config/vimzip/vimrc`에 한 줄 넣으면 됩니다. `:Theme`으로 목록 보기, `:Theme nord`로 바로 바꿔보기.
+
+```vim
+let g:vimzip_theme = 'gruvbox'
+```
+
+`gray`(기본), `gruvbox`, `nord`, `tokyonight`, `minimal`, `vimgreen`, `vscode`.
+직접 만들려면 [`themes/`](themes)의 파일을 `~/.config/vimzip/themes/<이름>.vim`으로 복사해서 고치세요.
+
 ## 스크린샷
 
 | 전체 검색 | 파일 검색 |
