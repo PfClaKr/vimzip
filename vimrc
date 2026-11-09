@@ -657,7 +657,8 @@ function! VimzipStatus() abort
       let pos = stop + 1
     endif
   endfor
-  return out
+  " pad to the window's edge ourselves: vim would fill with 'fillchars' (set to a bar letter, see s:BarJoins)
+  return out . repeat(' ', last - pos + 1)
 endfunction
 
 " the bar laid out for the whole screen width: [[column, text, group], ...]
