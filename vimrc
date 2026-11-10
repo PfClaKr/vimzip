@@ -546,8 +546,14 @@ let g:NERDTreeWinSize = 30
 let g:NERDTreeStatusline = -1
 let g:tagbar_no_status_line = 1
 let g:tagbar_compact = 2
-" fzf preview beside the list, or above it when the popup is narrow
-let g:fzf_preview_window = ['right,50%,<100(up,45%)', 'ctrl-/']
+" fzf preview beside the list, or above it when it would be under 40 columns wide (a narrow screen)
+let g:fzf_preview_window = ['right,50%,<40(up,50%)', 'ctrl-/']
+" a taller popup than fzf.vim's 60%, so the preview shows more of the file
+let g:fzf_layout = {'window': {'width': 0.9, 'height': 0.8}}
+" scrolling the preview (the file on the right) like vim: Ctrl+d / Ctrl+u half a page, Ctrl+f / Ctrl+b
+" a page, Shift+Up / Down a line (the mouse wheel over it works too)
+let $FZF_DEFAULT_OPTS = trim($FZF_DEFAULT_OPTS . ' --bind=ctrl-d:preview-half-page-down,ctrl-u:preview-half-page-up'
+      \ . ',ctrl-f:preview-page-down,ctrl-b:preview-page-up,shift-down:preview-down,shift-up:preview-up')
 let g:NERDTreeGitStatusConcealBrackets = 1
 let g:NERDTreeGitStatusShowIgnored = 1
 let g:NERDTreeGitStatusIndicatorMapCustom = {
@@ -1613,6 +1619,7 @@ nmap <silent> <expr> [c &diff ? '[c' : '<Plug>(GitGutterPrevHunk)'
 " Space ?: these keys on one page
 let s:keys = [
       \ 'find   Space f   ff file  fs text  fw word  fb open  fr recent  ft symbol  fp project',
+      \ '       in a list Ctrl+d / u preview half page  Ctrl+f / b page  Shift+Up / Down line  Ctrl+/ hide',
       \ 'git    Space g   gs status  gc commit  gb blame  gB file blame  gh history  gl graph',
       \ '                 gt timeline  gd diff  gp preview  ga stage  gu undo   ]c [c next / prev',
       \ 'code   gd F12 definition  gr references  K docs  ]e [e errors  Space ce error  Space cf format',
@@ -1644,6 +1651,14 @@ for s:k in ['<F2>', '<F3>', '<F4>', '<F5>', '<F10>', '<F11>', '<F12>', '<C-S-f>'
   endif
 endfor
 tnoremap <silent> <C-S-f> <C-w>:call <SID>Buf('Find')<CR>
+" Terminals that send nothing special for Ctrl+Shift+letter send plain Ctrl+letter, and vim then
+" matches the Ctrl+Shift mappings on it: Ctrl+f (page down, or forward a character in a shell) would
+" open the search and Ctrl+e (scroll, end of line) the tree. These come after, so plain Ctrl+f / e
+" keep their own meaning; a real Ctrl+Shift code still reaches the mappings above.
+for s:m in ['n', 'x', 'i', 't']
+  execute s:m . 'noremap <C-f> <C-f>'
+  execute s:m . 'noremap <C-e> <C-e>'
+endfor
 " debugger (termdebug): F5 start/continue, F9 breakpoint, F10 over, F11 step
 function! s:Debug() abort
   if exists(':RunOrContinue') == 2
