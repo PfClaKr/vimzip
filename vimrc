@@ -1616,32 +1616,8 @@ nmap <silent> <leader>gu :call <SID>EditWin()<CR><Plug>(GitGutterUndoHunk)
 nmap <silent> <expr> ]c &diff ? ']c' : '<Plug>(GitGutterNextHunk)'
 nmap <silent> <expr> [c &diff ? '[c' : '<Plug>(GitGutterPrevHunk)'
 
-" Space ?: these keys on one page
-let s:keys = [
-      \ 'find   Space f   ff file  fs text  fw word  fb open  fr recent  ft symbol  fp project',
-      \ '       in a list Ctrl+d / u preview half page  Ctrl+f / b page  Shift+Up / Down line  Ctrl+/ hide',
-      \ 'git    Space g   gs status  gc commit  gb blame  gB file blame  gh history  gl graph',
-      \ '                 gt timeline  gd diff  gp preview  ga stage  gu undo   ]c [c next / prev',
-      \ 'code   gd F12 definition  gr references  K docs  ]e [e errors  Space ce error  Space cf format',
-      \ 'panel  Space e explorer (F2)  Space o outline (F3)  Space a AI  Space tt terminal (F4)',
-      \ 'term   Space ts below  Space tv beside   in a terminal: Ctrl+w s / v,  Ctrl+w N scroll',
-      \ 'window Ctrl+w s / v split  Ctrl+w q close  Ctrl+w = equal  Ctrl+h/j/k/l move',
-      \ 'tab    Tab / Shift+Tab  Space q close  :q close  Ctrl+s save',
-      \ 'debug  Space d   dd start/continue (F5)  db breakpoint (F9)  dn next (F10)  di in (F11)  do out',
-      \ ]
-function! s:Keys() abort
-  call popup_create(s:keys, {'title': ' keys (any key closes) ', 'border': [], 'padding': [0, 1, 0, 1],
-        \ 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'filter': function('s:KeysFilter'),
-        \ 'mapping': 0, 'zindex': 300})
-endfunction
-function! s:KeysFilter(id, key) abort
-  if a:key[0] ==# "\x80"
-    return 0  " vim's own events (cursor hold, mouse moves), not a key press
-  endif
-  call popup_close(a:id)
-  return 1
-endfunction
-nnoremap <silent> <leader>? :call <SID>Keys()<CR>
+" Space ?: every key on one page (autoload/vimzip/keys.vim)
+nnoremap <silent> <leader>? :call vimzip#keys#show()<CR>
 
 " the same keys while typing or selecting (unmapped, vim would type "<F4>" into the file)
 for s:k in ['<F2>', '<F3>', '<F4>', '<F5>', '<F10>', '<F11>', '<F12>', '<C-S-f>', '<C-S-e>', '<C-M-i>']
