@@ -3,7 +3,7 @@ set nocompatible
 let &packpath = $VIMZIP . ',' . $VIMRUNTIME
 let &runtimepath = $VIMZIP . ',' . $VIMRUNTIME . ',' . $VIMRUNTIME . '/after'
 let s:cache = expand('~/.cache/vimzip')
-for s:d in ['undo', 'swap', 'sessions', 'tags', 'systags', 'words']
+for s:d in ['undo', 'sessions', 'tags', 'systags', 'words']
   silent! call mkdir(s:cache . '/' . s:d, 'p')
 endfor
 
@@ -39,7 +39,9 @@ set ttimeout ttimeoutlen=50 updatetime=300
 set completeopt=menuone,popup noautocomplete
 set undofile
 let &undodir = s:cache . '/undo'
-let &directory = s:cache . '/swap//'
+" no swap files: changes are saved within a second anyway, and a swap file only gets in the way
+" (the E325 prompt) when a project is open in two vims
+set noswapfile
 
 " autosave on leaving insert mode, after normal-mode changes, and on focus/buffer change
 " saving a new file creates its folders, like VSCode
@@ -687,11 +689,14 @@ function! VimzipStatus() abort
   let [first, last] = [col, col + winwidth(w) - 1]
   let out = '%#VimzipBar#'
   let pos = first
-  for [x, text, group] in s:BarLayout()
-    let [start, stop] = [max([x, first]), min([x + strwidth(text) - 1, last])]
+  for [x, cells, group] in s:BarLayout()
+    let [start, stop] = [max([x, first]), min([x + len(cells) - 1, last])]
     if start <= stop
-      let out .= repeat(' ', start - pos) . '%#' . group . '#'
-            \ . s:Esc(strcharpart(text, start - x, stop - start + 1)) . '%#VimzipBar#'
+      let part = cells[start - x : stop - x]
+      " half of a wide character cut off by the window's edge
+      if part[0] ==# '' | let part[0] = ' ' | endif
+      if get(cells, stop - x + 1, 'x') ==# '' | let part[-1] = ' ' | endif
+      let out .= repeat(' ', start - pos) . '%#' . group . '#' . s:Esc(join(part, '')) . '%#VimzipBar#'
       let pos = stop + 1
     endif
   endfor
@@ -700,16 +705,46 @@ function! VimzipStatus() abort
 endfunction
 
 " the bar laid out for the whole screen width: [[column, text, group], ...]
+" Items are lists of screen cells (a wide character such as Hangul is the character and an empty
+" second cell), so each window can cut out exactly its columns.
+function! s:BarCells(x, text, joins) abort
+  if a:text !~# '[^ -~]'
+    return split(a:text, '\zs')  " plain ASCII: one cell per character
+  endif
+  let cells = []
+  for ch in split(a:text, '\zs')
+    if strwidth(ch) == 2
+      " the cell where two status lines meet holds one narrow character: move a wide one past it
+      while index(a:joins, a:x + len(cells)) >= 0 || index(a:joins, a:x + len(cells) + 1) >= 0
+        call add(cells, ' ')
+      endwhile
+      call extend(cells, [ch, ''])
+    else
+      call add(cells, strwidth(ch) == 1 ? ch : '?')
+    endif
+  endfor
+  return cells
+endfunction
 function! s:BarLayout() abort
+  if exists('s:bar_now')
+    return s:bar_now  " computed once per refresh for all the status lines (see s:BarRefresh)
+  endif
+  let joins = []
+  for n in range(1, winnr('$'))
+    let j = win_screenpos(n)[1] + winwidth(n)
+    if j <= &columns && s:AtBottom(win_getid(n))
+      call add(joins, j)
+    endif
+  endfor
   let e = s:EditorWin()
   let b = e ? winbufnr(e) : bufnr('')
   let [name, group] = get(s:modes, mode(), [toupper(mode()), 'Normal'])
-  let placed = [[1, ' ' . name . ' ', 'VimzipMode' . group]]
-  let x = strwidth(placed[0][1]) + 3
+  let placed = [[1, s:BarCells(1, ' ' . name . ' ', joins), 'VimzipMode' . group]]
+  let x = len(placed[0][1]) + 3
   for item in [exists('*FugitiveHead') ? FugitiveHead(0, b) : '', VimzipProblems(b)]
     if item !=# ''
-      call add(placed, [x, item, 'VimzipBar'])
-      let x += strwidth(item) + 2
+      call add(placed, [x, s:BarCells(x, item, joins), 'VimzipBar'])
+      let x += len(placed[-1][1]) + 2
     endif
   endfor
   if !e
@@ -729,8 +764,9 @@ function! s:BarLayout() abort
       if drop == 2 | let items[3] = '' | endif
     endif
     let right = join(filter(copy(items), 'v:val !=# ""'), '  ')
-    if &columns - strwidth(right) > x
-      return placed + [[&columns - strwidth(right), right, 'VimzipBar']]
+    let at = &columns - strwidth(right)
+    if at > x
+      return placed + [[at, s:BarCells(at, right, []), 'VimzipBar']]
     endif
   endfor
   return placed
@@ -752,9 +788,9 @@ function! s:BarJoins() abort
       continue
     endif
     let ch = ' '
-    for [x, text, _] in layout
-      if j >= x && j < x + strwidth(text)
-        let ch = strcharpart(text, j - x, 1)
+    for [x, cells, _] in layout
+      if j >= x && j < x + len(cells)
+        let ch = cells[j - x]
       endif
     endfor
     let ch = ch =~# '^[,\\ ]\=$' || strwidth(ch) != 1 ? ' ' : ch
@@ -766,8 +802,11 @@ function! s:BarJoins() abort
   endfor
 endfunction
 function! s:BarRefresh() abort
+  unlet! s:bar_now
+  let s:bar_now = s:BarLayout()
   call s:BarJoins()
   redrawstatus!
+  unlet! s:bar_now
 endfunction
 
 " switch/close buffers without touching the tree or terminal windows
@@ -1110,6 +1149,15 @@ function! s:Start() abort
   let s:session = s:SessionFile()
   if filereadable(s:session)
     execute 'silent! source' fnameescape(s:session)
+    " files deleted since then do not come back as empty tabs
+    for gone in filter(getbufinfo({'buflisted': 1}), 'v:val.name !=# "" && !filereadable(v:val.name) && !v:val.changed')
+      if len(getbufinfo({'buflisted': 1})) > 1
+        for w in gone.windows
+          call win_execute(w, 'bprevious')
+        endfor
+        execute 'silent! bwipeout' gone.bufnr
+      endif
+    endfor
   else
     enew
   endif
@@ -1124,8 +1172,10 @@ endfunction
 function! s:Save() abort
   if !exists('s:session') | return | endif
   silent! NERDTreeClose
+  silent! diffoff!
   for w in reverse(range(1, winnr('$')))
-    if winnr('$') > 1 && getwinvar(w, '&buftype') !=# ''
+    " panels and git's views of a file (diffs, old versions) are not part of the session
+    if winnr('$') > 1 && (getwinvar(w, '&buftype') !=# '' || bufname(winbufnr(w)) =~# '^\a\+://')
       execute w . 'close'
     endif
   endfor
