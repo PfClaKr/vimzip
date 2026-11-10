@@ -31,6 +31,8 @@ set fillchars+=vert:│
 " no window narrower than its line-number gutter: vim divides by zero (crashes) laying out a
 " window exactly that wide
 set winminwidth=12
+" opening or closing a window leaves the others as they are (vim would make them all equal)
+set noequalalways
 set incsearch hlsearch ignorecase smartcase
 " exact-case tag lookups can binary-search the sorted tags file (gd 540 ms -> 1 ms on LLVM)
 set tagcase=match
@@ -295,9 +297,25 @@ function! s:AgoShort(t) abort
   endfor
   return 'now'
 endfunction
+function! s:TreeGone() abort
+  if exists('g:NERDTree') && !g:NERDTree.IsOpen() && bufwinnr(s:tl.buf) > 0
+    call s:ToggleTimeline()
+    let s:timeline_hidden = 1
+  endif
+endfunction
+function! s:TreeBack() abort
+  if get(s:, 'timeline_hidden', 0) && exists('g:NERDTree') && g:NERDTree.IsOpen() && bufwinnr(s:tl.buf) < 0
+    let s:timeline_hidden = 0
+    call s:ToggleTimeline()
+  endif
+endfunction
 function! s:ToggleTimeline() abort
   if bufwinnr(s:tl.buf) > 0
+    if get(s:tl, 'viewing', 0)
+      call s:TimelineCloseDiff()
+    endif
     execute bufwinnr(s:tl.buf) . 'close'
+    let s:timeline_hidden = 0
     return
   endif
   call s:EditWin()
@@ -308,7 +326,9 @@ function! s:ToggleTimeline() abort
     NERDTree
   endif
   belowright split
-  execute 'resize' max([6, (&lines - &cmdheight - 3) * 2 / 5])
+  execute 'resize' s:PanelSize('timeline')
+  setlocal winfixheight
+  let s:set[win_getid()] = winheight(0)
   if bufexists(s:tl.buf)
     execute 'buffer' s:tl.buf
   else
@@ -397,14 +417,14 @@ function! s:TimelineOpen() abort
   let s:tl.viewing = 1
   try
     if it.sha ==# ''
-      Gvdiffsplit HEAD
+      call s:DiffSplit('', 'HEAD')
     else
       let path = it.path !=# '' ? it.path : expand('%')
       execute 'Gedit' fnameescape(it.sha . ':' . path)
       " the commit that added the file has nothing to compare with: show the file as it was
       call system('git -C ' . shellescape(fnamemodify(s:tl.file, ':h')) . ' cat-file -e ' . shellescape(it.sha . '~1:' . path))
       if !v:shell_error
-        execute 'leftabove Gvdiffsplit' it.sha . '~1'
+        call s:DiffSplit('leftabove', it.sha . '~1')
       else
         setlocal nobuflisted
         nnoremap <buffer> <silent> q :call <SID>TimelineCloseDiff()<CR>
@@ -414,7 +434,8 @@ function! s:TimelineOpen() abort
     echohl WarningMsg | echo 'Timeline: ' . v:exception | echohl None
   endtry
   " old on the left, new on the right, like VSCode; past versions stay out of the tab bar
-  for d in filter(range(1, winnr('$')), 'getwinvar(v:val, "&diff")')
+  for d in filter(range(1, winnr('$')), 'getwinvar(v:val, "&diff") || win_getid(v:val) == s:tl.diffwin')
+    call setwinvar(d, 'vimzip_tl', 1)
     call win_execute(win_getid(d), 'nnoremap <buffer> <silent> q :call <SID>TimelineCloseDiff()<CR>')
     if bufname(winbufnr(d)) =~# '^fugitive://'
       call setbufvar(winbufnr(d), '&buflisted', 0)
@@ -422,18 +443,27 @@ function! s:TimelineOpen() abort
   endfor
   call lightline#update()
 endfunction
-function! s:TimelineCloseDiff() abort
+" a:1: keep the current window as it is (the comparison was left by opening another file there)
+function! s:TimelineCloseDiff(...) abort
   let s:tl.viewing = 0
+  let keep = a:0 ? win_getid() : get(s:tl, 'diffwin', 0)
   diffoff!
   for w in reverse(range(1, winnr('$')))
-    if win_getid(w) != get(s:tl, 'diffwin', 0) && bufname(winbufnr(w)) =~# '^fugitive://'
+    if win_getid(w) != keep && (bufname(winbufnr(w)) =~# '^fugitive://' || getwinvar(w, 'vimzip_tl', 0))
       execute w . 'close'
     endif
   endfor
-  if win_gotoid(get(s:tl, 'diffwin', 0))
+  for w in range(1, winnr('$'))
+    call setwinvar(w, 'vimzip_tl', 0)
+  endfor
+  if !a:0 && win_gotoid(get(s:tl, 'diffwin', 0))
     execute 'edit' fnameescape(s:tl.file)
-    silent! nunmap <buffer> q
   endif
+  for b in getbufinfo()
+    if getbufvar(b.bufnr, '&buftype') ==# '' || b.name =~# '^fugitive://'
+      call win_execute(get(b.windows, 0, -1), 'silent! nunmap <buffer> q')
+    endif
+  endfor
   for b in getbufinfo()
     if b.name =~# '^fugitive://' && empty(b.windows)
       execute 'silent! bwipeout' b.bufnr
@@ -442,19 +472,38 @@ function! s:TimelineCloseDiff() abort
 endfunction
 " quit when only the tree and timeline are left
 function! s:QuitIfOnlyPanels() abort
+  if getcmdwintype() !=# '' || mode() !=# 'n' && mode() !=# 't'
+    return
+  endif
   for w in range(1, winnr('$'))
     let b = winbufnr(w)
-    if getbufvar(b, '&filetype') !=# 'nerdtree' && b != s:tl.buf
+    if index(['nerdtree', 'tagbar', 'vimziptimeline'], getbufvar(b, '&filetype')) < 0
+          \ && getbufvar(b, '&buftype') !=# 'terminal' && b != s:tl.buf
       return
     endif
   endfor
-  " only panels are left: leave vim, unless a hidden buffer still has unsaved text; show that instead
   let unsaved = filter(getbufinfo({'bufmodified': 1}), 'getbufvar(v:val.bufnr, "&buftype") ==# ""')
-  if empty(unsaved)
-    qall
+  let files = sort(getbufinfo({'buflisted': 1}), {a, b -> b.lastused - a.lastused})
+  if get(s:, 'quitting', 0) && empty(unsaved)
+    qall  " :q in the last file
+  endif
+  let s:quitting = 0
+  " only panels are left (the last editor window was closed): show a file again, the unsaved one
+  " first, rather than leaving vim
+  let tree = filter(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&filetype") ==# "nerdtree"')
+  if !empty(tree)
+    noautocmd call win_gotoid(win_getid(tree[0]))
+    rightbelow vertical new
   else
-    execute 'botright vertical sbuffer' unsaved[0].bufnr
-    call s:Layout()
+    topleft vertical new
+  endif
+  let blank = bufnr('')
+  if !empty(unsaved) || !empty(files)
+    execute 'buffer' (empty(unsaved) ? files[0].bufnr : unsaved[0].bufnr)
+    execute 'silent! bwipeout' blank
+  endif
+  call s:Layout()
+  if !empty(unsaved)
     echohl ErrorMsg | echo 'No write since last change (:w name to save, :q! to discard)' | echohl None
   endif
 endfunction
@@ -577,6 +626,7 @@ let g:lightline.component_raw = {'buffers': 1}
 " clicking a tab opens that file: Vim's tabline has no click handlers for buffers (only Neovim),
 " so read the name under the mouse and find its buffer (names shown as 's/util.c' when duplicated)
 function! s:Click() abort
+  let s:user_resize = reltime()  " a press may start dragging a window edge
   let m = getmousepos()
   " a click on the git marks at a window's right edge: to that change, or, between marks, to that
   " part of the file (like clicking a scrollbar)
@@ -634,6 +684,7 @@ augroup vimzip_status
   autocmd CursorMoved,CursorMovedI,ModeChanged,WinEnter,BufEnter,TextChanged,TextChangedI * call s:BarRefresh()
   autocmd WinResized,VimResized * call s:BarRefresh()
   autocmd VimResized * call s:Layout()
+  autocmd WinResized * call s:Resized()
 augroup END
 let s:modes = {'n': ['NORMAL', 'Normal'], 'i': ['INSERT', 'Insert'], 'R': ['REPLACE', 'Replace'],
   \ 'v': ['VISUAL', 'Visual'], 'V': ['V-LINE', 'Visual'], "\<C-v>": ['V-BLOCK', 'Visual'],
@@ -877,6 +928,7 @@ function! s:Quit(bang) abort
     setlocal nomodified  " discard: keep autosave (on leaving the buffer) from writing it
   endif
   if &buftype !=# '' || editwins > 1 || len(getbufinfo({'buflisted': 1})) < 2
+    let s:quitting = &buftype ==# '' && editwins < 2  " the last file: leave vim
     execute 'quit' . (a:bang ? '!' : '')
     return
   endif
@@ -887,6 +939,9 @@ function! s:Quit(bang) abort
 endfunction
 command! -bang VimzipQuit call s:Quit(<bang>0)
 command! -bang VimzipWriteQuit update | call s:Quit(<bang>0)
+nnoremap <silent> <C-w>q :VimzipQuit<CR>
+nnoremap <silent> <C-w><C-q> :VimzipQuit<CR>
+nnoremap <silent> <C-w>c :VimzipQuit<CR>
 nnoremap <silent> ZZ :VimzipWriteQuit<CR>
 nnoremap <silent> ZQ :VimzipQuit!<CR>
 cnoreabbrev <expr> q getcmdtype() ==# ':' && getcmdline() ==# 'q' ? 'VimzipQuit' : 'q'
@@ -906,12 +961,15 @@ function! s:ToggleTerm() abort
   let s:term_from = win_getid()
   if bufexists(t) && term_getstatus(t) =~# 'running'
     execute 'botright sbuffer' t
-    execute 'resize' max([6, (&lines - 4) * 3 / 10])
+    execute 'resize' s:PanelSize('term')
   else
-    execute 'botright terminal ++rows=' . max([6, (&lines - 4) * 3 / 10]) . ' ++kill=hup ++close'
+    execute 'botright terminal ++rows=' . s:PanelSize('term') . ' ++kill=hup ++close'
     call s:TermKeys()
     let s:term = bufnr('')
   endif
+  setlocal winfixheight
+  let s:set[win_getid()] = winheight(0)
+  call s:Layout()  " the split took rows from the windows above (the timeline): give them back
 endfunction
 
 " AI agent on the right (Ctrl+Alt+I / Space a): g:vimzip_ai, $VIMZIP_AI, or the first agent CLI found
@@ -948,12 +1006,75 @@ function! s:ToggleAi() abort
       execute 'silent! bwipeout' blank
     endif
   endif
+  setlocal winfixwidth
   call s:Layout()
 endfunction
 
 " panel sizes follow the screen: side panels shrink on small screens so the editor keeps 40
 " columns (on a very narrow screen the tree steps aside until there is room again), and the
 " terminal panel keeps about a third of the height. Runs on resize, Ctrl+w = and panel toggles.
+" panel sizes: the size you gave a panel (dragging its edge, Ctrl+w < >) is kept, otherwise a
+" default that follows the screen; Ctrl+w = goes back to the defaults
+let s:pref = {}
+let s:set = {}
+function! s:Kind(n) abort
+  let b = winbufnr(a:n)
+  let ft = getbufvar(b, '&filetype')
+  return ft ==# 'nerdtree' ? 'tree' : ft ==# 'tagbar' ? 'tagbar' : ft ==# 'vimziptimeline' ? 'timeline'
+        \ : b == get(s:, 'ai', -1) ? 'ai' : b == get(s:, 'term', -1) ? 'term' : ''
+endfunction
+function! s:PanelSize(kind) abort
+  let default = {'tree': min([30, max([20, &columns / 4])]), 'tagbar': min([40, max([24, &columns * 3 / 10])]),
+        \ 'ai': min([100, max([30, &columns * 2 / 5])]), 'term': max([6, (&lines - 4) * 3 / 10]),
+        \ 'timeline': max([6, (&lines - &cmdheight - 3) * 2 / 5])}[a:kind]
+  let most = a:kind ==# 'term' || a:kind ==# 'timeline' ? (&lines - 4) * 2 / 3
+        \ : a:kind ==# 'ai' ? &columns * 3 / 5 : min([60, &columns / 3])
+  return max([6, min([get(s:pref, a:kind, default), most])])
+endfunction
+" a panel whose size changed from what vim was told keeps that size from now on
+function! s:Resized() abort
+  " a window opened or closed (vim gave its room to a neighbour, maybe a panel): put the panels
+  " back to their sizes; only a resize with the same windows is the user's own
+  let shape = string(map(range(1, winnr('$')), 'win_getid(v:val)'))
+  if shape !=# get(s:, 'shape', '')
+    let s:shape = shape
+    call timer_start(0, {-> s:Layout()})
+    return
+  endif
+  let by_user = reltimefloat(reltime(get(s:, 'user_resize', [0, 0]))) < 1.5
+  let moved = 0
+  for id in get(v:event, 'windows', [])
+    let n = win_id2win(id)
+    let kind = n ? s:Kind(n) : ''
+    if kind !=# '' && has_key(s:set, id)
+      let size = kind ==# 'term' || kind ==# 'timeline' ? winheight(n) : winwidth(n)
+      if size != s:set[id]
+        if by_user
+          let s:pref[kind] = size
+          let s:set[id] = size
+        else
+          let moved = 1
+        endif
+      endif
+    endif
+  endfor
+  if moved
+    call timer_start(0, {-> s:Layout()})  " vim moved a panel's edge by itself: put it back
+  endif
+endfunction
+" the user resizes: dragging an edge with the mouse, or Ctrl+w + - < > _ |
+function! s:UserResize(keys) abort
+  let s:user_resize = reltime()
+  return a:keys
+endfunction
+for s:k in ['<LeftDrag>', '<LeftRelease>']
+  execute 'nnoremap <expr>' s:k '<SID>UserResize("\' . s:k . '")'
+  execute 'tnoremap <expr>' s:k '<SID>UserResize("\' . s:k . '")'
+endfor
+for s:k in ['+', '-', '<', '>', '_', '<Bar>']
+  " (a count typed before stays in front of the keys: 5 Ctrl+w >)
+  execute 'nnoremap <expr> <C-w>' . s:k '<SID>UserResize("\<C-w>' . s:k . '")'
+endfor
 function! s:PanelWidths(...) abort
   " a:1: a panel about to open ('ai' or 'tagbar'), counted as open
   let opening = get(a:, 1, '')
@@ -961,14 +1082,14 @@ function! s:PanelWidths(...) abort
   let ai = bufwinnr(get(s:, 'ai', -1)) > 0 || opening ==# 'ai'
   let tree = index(ft, 'nerdtree') >= 0 || get(s:, 'tree_hidden', 0)
   for pass in [0, 1]
-    let want = {'tree': tree ? min([30, max([20, &columns / 4])]) : 0,
-          \ 'tagbar': index(ft, 'tagbar') >= 0 ? min([40, max([24, &columns * 3 / 10])]) : 0,
-          \ 'ai': min([100, max([30, &columns * 2 / 5])])}
+    let want = {'tree': tree ? s:PanelSize('tree') : 0,
+          \ 'tagbar': index(ft, 'tagbar') >= 0 ? s:PanelSize('tagbar') : 0,
+          \ 'ai': s:PanelSize('ai')}
     " shrink the outline first, then the tree, then the agent, until the editor has 40 columns
     for [k, least] in [['tagbar', 24], ['tree', 20], ['ai', 30], ['tagbar', 20]]
       let over = want.tree + want.tagbar + (ai ? want.ai : 0) - (&columns - 43)
       if over > 0 && want[k] && (k !=# 'ai' || ai)
-        let want[k] = max([least, want[k] - over])
+        let want[k] = max([min([least, want[k]]), want[k] - over])
       endif
     endfor
     " an editor under 30 columns is not usable: the tree steps aside for the right-hand panels
@@ -985,35 +1106,39 @@ endfunction
 function! s:Layout(...) abort
   let here = win_getid()
   let want = s:PanelWidths(get(a:, 1, ''))
-  let g:NERDTreeWinSize = min([30, max([20, &columns / 4])])
+  let g:NERDTreeWinSize = s:PanelSize('tree')
   let tree = filter(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&filetype") ==# "nerdtree"')
   if !empty(tree)
     let s:tree_hidden = 0
     if !want.fits
-      let s:timeline_hidden = bufwinnr(s:tl.buf) > 0
-      if s:timeline_hidden
-        execute bufwinnr(s:tl.buf) . 'close'
-      endif
       NERDTreeClose
       let s:tree_hidden = 1
     endif
   elseif get(s:, 'tree_hidden', 0) && want.fits
     let s:tree_hidden = 0
     NERDTreeToggle
-    if get(s:, 'timeline_hidden', 0)
-      let s:timeline_hidden = 0
-      call s:ToggleTimeline()
-    endif
   endif
+  let s:shape = string(map(range(1, winnr('$')), 'win_getid(v:val)'))
   for n in range(1, winnr('$'))
-    let [b, ft] = [winbufnr(n), getbufvar(winbufnr(n), '&filetype')]
-    let size = ft ==# 'nerdtree' ? want.tree : ft ==# 'tagbar' ? want.tagbar : b == get(s:, 'ai', -1) ? want.ai : 0
-    if size
-      call win_execute(win_getid(n), 'vertical resize ' . size)
-    elseif b == get(s:, 'term', -1)
-      call win_execute(win_getid(n), 'resize ' . max([6, (&lines - 4) * 3 / 10]))
+    let kind = s:Kind(n)
+    let id = win_getid(n)
+    if kind ==# 'tree' || kind ==# 'tagbar' || kind ==# 'ai'
+      call win_execute(id, 'vertical resize ' . want[kind])
+      let s:set[id] = winwidth(n)
+    elseif kind ==# 'timeline' && winnr(n . 'k') != n
+      let column = winheight(winnr(n . 'k')) + winheight(n) + 1
+      call win_execute(id, 'resize ' . min([s:PanelSize(kind), column / 2]))
+      let s:set[id] = winheight(n)
+    elseif kind ==# 'term' && (winnr(n . 'k') != n || winnr(n . 'j') != n)
+      " only with a window above or below to trade rows with: resizing a full-height window
+      " would hand the rows to the command line
+      call win_execute(id, 'resize ' . s:PanelSize(kind))
+      let s:set[id] = winheight(n)
     endif
   endfor
+  if &cmdheight > 1
+    set cmdheight=1
+  endif
   call win_gotoid(here)
 endfunction
 " a new side panel is opened only after the others made room for it: a window squeezed to its
@@ -1024,9 +1149,17 @@ function! s:Outline() abort
     let g:tagbar_width = s:PanelWidths('tagbar').tagbar
   endif
   TagbarToggle
+  " tagbar closes itself when it is the last window from a WinEnter autocmd, which vim 9.2 refuses
+  " (E1312); s:QuitIfOnlyPanels takes care of that case
+  silent! autocmd! TagbarAutoCmds WinEnter *
   call s:Layout()
 endfunction
-nnoremap <silent> <C-w>= :wincmd =<Bar>call <SID>Layout()<CR>
+function! s:Equalize() abort
+  let s:pref = {}
+  wincmd =
+  call s:Layout()
+endfunction
+nnoremap <silent> <C-w>= :call <SID>Equalize()<CR>
 
 " files created or removed outside vim (in the terminal, by git or a build) show up in the tree by
 " themselves: the open folders whose modification time changed are read again
@@ -1038,6 +1171,9 @@ function! s:TreeSync(...) abort
   endif
 endfunction
 function! s:TreeSyncHere() abort
+  if !exists('b:NERDTree')
+    return
+  endif
   let changed = 0
   let todo = [b:NERDTree.root]
   while !empty(todo)
@@ -1070,7 +1206,11 @@ function! s:RevealInTree() abort
     return
   endif
   let f = expand('%:p')
-  let root = g:NERDTree.ForCurrentTab().root.path.str()
+  try
+    let root = g:NERDTree.ForCurrentTab().root.path.str()
+  catch
+    return
+  endtry
   if f ==# get(s:, 'revealed', '') || !filereadable(f) || stridx(f, root . '/') != 0
     return
   endif
@@ -1260,7 +1400,7 @@ function! s:RulerLater(...) abort
 endfunction
 function! s:Ruler() abort
   let s:ruler_timer = -1
-  call map(s:rulers, 'popup_close(v:val)')
+  call map(s:rulers + filter(popup_list(), 'getwinvar(v:val, "vimzip_ruler", 0)'), 'popup_close(v:val)')
   let s:rulers = []
   let s:ruler_info = {}
   if !exists('g:loaded_gitgutter') | return | endif
@@ -1301,6 +1441,7 @@ function! s:Ruler() abort
     call add(s:rulers, popup_create(text, {'line': info.winrow, 'col': info.wincol + info.width - 1,
           \ 'minwidth': 1, 'maxwidth': 1, 'minheight': h, 'maxheight': h, 'wrap': 0, 'zindex': 1,
           \ 'highlight': 'VimzipRuler', 'mask': mask}))
+    call setwinvar(s:rulers[-1], 'vimzip_ruler', 1)
     let s:ruler_info[s:rulers[-1]] = {'win': w, 'h': h, 'n': n, 'target': target}
   endfor
 endfunction
@@ -1319,12 +1460,18 @@ augroup vimzip
   autocmd VimLeavePre * call s:Save()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
   autocmd User ALELintPost call s:BarRefresh()
-  autocmd BufEnter * call s:QuitIfOnlyPanels()
+  autocmd BufEnter * call timer_start(0, {-> s:QuitIfOnlyPanels()})
   autocmd WinClosed * call timer_start(0, {-> s:AfterClose()})
   " q closes fugitive's status and blame windows too (its own key is gq)
   autocmd FileType fugitive,fugitiveblame nmap <buffer> <silent> q gq
   " git's versions of a file (diffs, blame, history) stay out of the tabs
   autocmd BufReadPost fugitive://* setlocal nobuflisted
+  " the timeline lives under the tree: it goes away and comes back with it
+  autocmd BufWinLeave NERD_tree_* call timer_start(0, {-> s:TreeGone()})
+  autocmd BufWinEnter NERD_tree_* call timer_start(0, {-> s:TreeBack()})
+  " a timeline comparison left by opening another file in one of its windows (Tab, the tree, Ctrl+p)
+  autocmd BufWinEnter * if get(s:tl, 'viewing', 0) && get(w:, 'vimzip_tl', 0) && bufname('') !~# '^fugitive://'
+        \ && bufnr('') != bufnr(s:tl.file) | call timer_start(0, {-> s:TimelineCloseDiff(1)}) | endif
   autocmd BufEnter * call s:RevealInTree()
   autocmd BufWritePost * call timer_start(0, {-> s:RevealInTree()})
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
@@ -1408,6 +1555,10 @@ tnoremap <silent> <C-w>s <C-w>:call <SID>NewTerm(0)<CR>
 tnoremap <silent> <C-w>v <C-w>:call <SID>NewTerm(1)<CR>
 
 " windows: vim's Ctrl+w keys (s / v split, q close, = equal ...), plus Ctrl+h/j/k/l to move
+" Ctrl+w s / v / n in a side panel split the editor instead (a split tree or terminal is no use)
+for s:k in ['s', 'v', 'n', '<C-s>', '<C-v>', '<C-n>']
+  execute 'nnoremap <silent> <C-w>' . s:k ':<C-u>call <SID>EditWin()<Bar>execute "wincmd ' . (s:k =~# 's' ? 's' : s:k =~# 'v' ? 'v' : 'n') . '"<CR>'
+endfor
 nnoremap <C-h> <C-w>h
 nnoremap <C-j> <C-w>j
 nnoremap <C-k> <C-w>k
@@ -1436,18 +1587,26 @@ nnoremap <silent> <leader>ce :ALEDetail<CR>
 nnoremap <silent> <leader>cf gg=G``
 
 " git: Space g; ]c / [c move between changes (vim's keys for that in a diff)
-nnoremap <silent> <leader>gs :Git<CR>
-nnoremap <silent> <leader>gc :call <SID>CommitPopup()<CR>
-nnoremap <silent> <leader>gb :let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
-nnoremap <silent> <leader>gB :Git blame<CR>
-nnoremap <silent> <leader>gh :GV!<CR>
+nnoremap <silent> <leader>gs :call <SID>EditWin()<Bar>Git<CR>
+nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>CommitPopup()<CR>
+nnoremap <silent> <leader>gb :call <SID>EditWin()<Bar>let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
+nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>Git blame<CR>
+nnoremap <silent> <leader>gh :call <SID>EditWin()<Bar>GV!<CR>
 xnoremap <silent> <leader>gh :GV<CR>
-nnoremap <silent> <leader>gl :GV<CR>
+nnoremap <silent> <leader>gl :call <SID>EditWin()<Bar>GV<CR>
 nnoremap <silent> <leader>gt :call <SID>ToggleTimeline()<CR>
-nnoremap <silent> <leader>gd :Gvdiffsplit<CR>
-nmap <silent> <leader>gp <Plug>(GitGutterPreviewHunk)
-nmap <silent> <leader>ga <Plug>(GitGutterStageHunk)
-nmap <silent> <leader>gu <Plug>(GitGutterUndoHunk)
+" side by side, or one above the other when the window is too narrow for two
+function! s:DiffSplit(mods, rev) abort
+  try
+    execute a:mods . ' ' . (winwidth(0) >= 2 * &winminwidth + 30 ? 'Gvdiffsplit' : 'Gdiffsplit') . ' ' . a:rev
+  catch /E36:/
+    echohl WarningMsg | echo 'No room to compare: close a panel or split' | echohl None
+  endtry
+endfunction
+nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>DiffSplit('', '')<CR>
+nmap <silent> <leader>gp :call <SID>EditWin()<CR><Plug>(GitGutterPreviewHunk)
+nmap <silent> <leader>ga :call <SID>EditWin()<CR><Plug>(GitGutterStageHunk)
+nmap <silent> <leader>gu :call <SID>EditWin()<CR><Plug>(GitGutterUndoHunk)
 nmap <silent> <expr> ]c &diff ? ']c' : '<Plug>(GitGutterNextHunk)'
 nmap <silent> <expr> [c &diff ? '[c' : '<Plug>(GitGutterPrevHunk)'
 
