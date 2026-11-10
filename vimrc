@@ -574,8 +574,16 @@ let g:lightline#bufferline#min_buffer_count = 1
 let g:lightline.component_raw = {'buffers': 1}
 " clicking a tab opens that file: Vim's tabline has no click handlers for buffers (only Neovim),
 " so read the name under the mouse and find its buffer (names shown as 's/util.c' when duplicated)
-function! s:TabClick() abort
+function! s:Click() abort
   let m = getmousepos()
+  " a click on the git marks at a window's right edge: to that change, or, between marks, to that
+  " part of the file (like clicking a scrollbar)
+  let ruler = get(get(s:, 'ruler_info', {}), m.winid, {})
+  if !empty(ruler)
+    let r = m.winrow - 1
+    let lnum = get(ruler.target, r, r * ruler.n / ruler.h + 1)
+    return ":\<C-u>call win_gotoid(" . ruler.win . ")|call cursor(" . lnum . ", 1)|normal! ^zz\<CR>"
+  endif
   if m.screenrow != 1 || m.winid
     return "\<LeftMouse>"
   endif
@@ -606,7 +614,11 @@ function! s:TabClick() abort
   endfor
   return ''
 endfunction
-nnoremap <silent> <expr> <LeftMouse> <SID>TabClick()
+nnoremap <silent> <expr> <LeftMouse> <SID>Click()
+function! s:InsertClick() abort
+  return has_key(get(s:, 'ruler_info', {}), getmousepos().winid) ? "\<Esc>" . s:Click() : "\<LeftMouse>"
+endfunction
+inoremap <silent> <expr> <LeftMouse> <SID>InsertClick()
 let g:NERDTreeMouseMode = 3
 
 " One status bar for the whole screen (vim has no laststatus=3 as Neovim does).
@@ -1248,6 +1260,7 @@ function! s:Ruler() abort
   let s:ruler_timer = -1
   call map(s:rulers, 'popup_close(v:val)')
   let s:rulers = []
+  let s:ruler_info = {}
   if !exists('g:loaded_gitgutter') | return | endif
   for w in gettabinfo(tabpagenr())[0].windows
     let b = winbufnr(w)
@@ -1256,12 +1269,16 @@ function! s:Ruler() abort
     if empty(hunks) || info.width < 20 | continue | endif
     let [h, n] = [info.height, max([info.height, getbufinfo(b)[0].linecount])]
     let marks = repeat([''], h)
+    let target = {}
     for [_, old, start, new] in hunks
       let kind = old == 0 ? 'Add' : new == 0 ? 'Delete' : 'Change'
       let start = max([start, 1])
       for r in range((start - 1) * h / n, (start + max([new, 1]) - 2) * h / n)
         if r < h && (marks[r] ==# '' || kind ==# 'Change')
           let marks[r] = kind
+        endif
+        if r < h && !has_key(target, r)
+          let target[r] = start
         endif
       endfor
     endfor
@@ -1282,6 +1299,7 @@ function! s:Ruler() abort
     call add(s:rulers, popup_create(text, {'line': info.winrow, 'col': info.wincol + info.width - 1,
           \ 'minwidth': 1, 'maxwidth': 1, 'minheight': h, 'maxheight': h, 'wrap': 0, 'zindex': 1,
           \ 'highlight': 'VimzipRuler', 'mask': mask}))
+    let s:ruler_info[s:rulers[-1]] = {'win': w, 'h': h, 'n': n, 'target': target}
   endfor
 endfunction
 augroup vimzip_ruler
