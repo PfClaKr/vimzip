@@ -222,6 +222,8 @@ let g:gutentags_file_list_command = 'vimzip-files'
 
 " gitgutter: its first git calls block while vim starts, so turn it on after the first screen
 let g:gitgutter_enabled = 0
+" its keys are set with the other git keys (Space g, ]c [c)
+let g:gitgutter_map_keys = 0
 " Space hp: the hunk in a popup at the cursor
 let g:gitgutter_preview_win_floating = 1
 
@@ -1356,16 +1358,27 @@ augroup vimzip_hover
   autocmd WinLeave * call s:TreeHoverClose()
 augroup END
 
-" keys
+" keys: vim's own keys where vim has one (gd, gr, K, ]c, ]e, Ctrl+w ...), VSCode's F-keys and
+" Ctrl+ combinations, and Space + a letter per group (f find, g git, c code, t terminal, d debug)
+
+" find: Space f
 nnoremap <silent> <C-p> :call <SID>Buf('Files')<CR>
 nnoremap <silent> <C-S-f> :call <SID>Buf('Find')<CR>
-nnoremap <silent> <leader>f :call <SID>Buf('Find')<CR>
-nnoremap <silent> <leader>F :call <SID>FindText(expand('<cword>'))<CR>
-xnoremap <silent> <C-S-f> <Esc>:call <SID>FindText(join(getregion(getpos("'<"), getpos("'>"), {'type': visualmode()}), "\n"))<CR>
-xnoremap <silent> <leader>f <Esc>:call <SID>FindText(join(getregion(getpos("'<"), getpos("'>"), {'type': visualmode()}), "\n"))<CR>
-nnoremap <silent> <leader>b :call <SID>Buf('Buffers')<CR>
-nnoremap <silent> <leader>p :call <SID>PickProject()<CR>
-nnoremap <silent> <leader>t :call <SID>Buf('Tags')<CR>
+xnoremap <silent> <C-S-f> <Esc>:call <SID>FindText(<SID>Selection())<CR>
+nnoremap <silent> <leader>ff :call <SID>Buf('Files')<CR>
+nnoremap <silent> <leader>fs :call <SID>Buf('Find')<CR>
+xnoremap <silent> <leader>fs <Esc>:call <SID>FindText(<SID>Selection())<CR>
+nnoremap <silent> <leader>fw :call <SID>FindText(expand('<cword>'))<CR>
+xnoremap <silent> <leader>fw <Esc>:call <SID>FindText(<SID>Selection())<CR>
+nnoremap <silent> <leader>fb :call <SID>Buf('Buffers')<CR>
+nnoremap <silent> <leader>fr :call <SID>Buf('History')<CR>
+nnoremap <silent> <leader>ft :call <SID>Buf('Tags')<CR>
+nnoremap <silent> <leader>fp :call <SID>PickProject()<CR>
+function! s:Selection() abort
+  return join(getregion(getpos("'<"), getpos("'>"), {'type': visualmode()}), "\n")
+endfunction
+
+" tabs and files
 nnoremap <silent> <Tab> :call <SID>Buf('bnext')<CR>
 nnoremap <silent> <S-Tab> :call <SID>Buf('bprevious')<CR>
 nnoremap <silent> <leader>q :call <SID>CloseBuf()<CR>
@@ -1373,36 +1386,34 @@ nnoremap <silent> <C-s> :update<CR>
 inoremap <silent> <C-s> <C-o>:update<CR>
 xnoremap <silent> <C-s> <Esc>:update<CR>
 xnoremap <C-c> y
-nnoremap <silent> <F2> :NERDTreeToggle<CR>
+
+" panels: Space e explorer, Space o outline, Space a AI agent (and VSCode's keys)
+nnoremap <silent> <F2> :call <SID>Explorer()<CR>
 nnoremap <silent> <C-S-e> :call <SID>Explorer()<CR>
 tnoremap <silent> <C-S-e> <C-w>:call <SID>Explorer()<CR>
+nnoremap <silent> <leader>e :call <SID>Explorer()<CR>
+nnoremap <silent> <F3> :call <SID>Outline()<CR>
+nnoremap <silent> <leader>o :call <SID>Outline()<CR>
 nnoremap <silent> <C-M-i> :call <SID>ToggleAi()<CR>
 tnoremap <silent> <C-M-i> <C-w>:call <SID>ToggleAi()<CR>
 nnoremap <silent> <leader>a :call <SID>ToggleAi()<CR>
-nnoremap <silent> <F3> :call <SID>Outline()<CR>
+
+" terminal: Space t; inside a terminal Ctrl+w s / v open another one below / beside (like windows)
 nnoremap <silent> <F4> :call <SID>ToggleTerm()<CR>
 tnoremap <silent> <F4> <C-w>:call <SID>ToggleTerm()<CR>
-nnoremap <silent> <leader>- :call <SID>NewTerm(0)<CR>
-nnoremap <silent> <leader>\ :call <SID>NewTerm(1)<CR>
-tnoremap <silent> <C-w>n <C-w>:call <SID>NewTerm(0)<CR>
-tnoremap <silent> <C-w>\ <C-w>:call <SID>NewTerm(1)<CR>
-" windows
-nnoremap <silent> <leader>s :split<CR>
-nnoremap <silent> <leader>v :vsplit<CR>
+nnoremap <silent> <leader>tt :call <SID>ToggleTerm()<CR>
+nnoremap <silent> <leader>ts :call <SID>NewTerm(0)<CR>
+nnoremap <silent> <leader>tv :call <SID>NewTerm(1)<CR>
+tnoremap <silent> <C-w>s <C-w>:call <SID>NewTerm(0)<CR>
+tnoremap <silent> <C-w>v <C-w>:call <SID>NewTerm(1)<CR>
+
+" windows: vim's Ctrl+w keys (s / v split, q close, = equal ...), plus Ctrl+h/j/k/l to move
 nnoremap <C-h> <C-w>h
 nnoremap <C-j> <C-w>j
 nnoremap <C-k> <C-w>k
 nnoremap <C-l> <C-w>l
-nnoremap <silent> <leader>e :ALEDetail<CR>
-" git (GitLens-like)
-nnoremap <silent> <leader>gb :let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
-nnoremap <silent> <leader>gB :Git blame<CR>
-nnoremap <silent> <leader>gc :call <SID>CommitPopup()<CR>
-nnoremap <silent> <leader>gh :GV!<CR>
-xnoremap <silent> <leader>gh :GV<CR>
-nnoremap <silent> <leader>gl :GV<CR>
-nnoremap <silent> <leader>gs :Git<CR>
-nnoremap <silent> <leader>gt :call <SID>ToggleTimeline()<CR>
+
+" code: vim's gd / gr / K / ]e [e, VSCode's F12, Space c for the rest
 nnoremap <silent> <F12> :call <SID>GoDef()<CR>
 nnoremap <silent> gd :call <SID>GoDef()<CR>
 if s:lsp
@@ -1419,6 +1430,53 @@ else
     nnoremap <silent> K :echo 'No documentation: clangd or man is needed'<CR>
   endif
 endif
+nmap ]e <Plug>(ale_next_wrap)
+nmap [e <Plug>(ale_previous_wrap)
+nnoremap <silent> <leader>ce :ALEDetail<CR>
+nnoremap <silent> <leader>cf gg=G``
+
+" git: Space g; ]c / [c move between changes (vim's keys for that in a diff)
+nnoremap <silent> <leader>gs :Git<CR>
+nnoremap <silent> <leader>gc :call <SID>CommitPopup()<CR>
+nnoremap <silent> <leader>gb :let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
+nnoremap <silent> <leader>gB :Git blame<CR>
+nnoremap <silent> <leader>gh :GV!<CR>
+xnoremap <silent> <leader>gh :GV<CR>
+nnoremap <silent> <leader>gl :GV<CR>
+nnoremap <silent> <leader>gt :call <SID>ToggleTimeline()<CR>
+nnoremap <silent> <leader>gd :Gvdiffsplit<CR>
+nmap <silent> <leader>gp <Plug>(GitGutterPreviewHunk)
+nmap <silent> <leader>ga <Plug>(GitGutterStageHunk)
+nmap <silent> <leader>gu <Plug>(GitGutterUndoHunk)
+nmap <silent> <expr> ]c &diff ? ']c' : '<Plug>(GitGutterNextHunk)'
+nmap <silent> <expr> [c &diff ? '[c' : '<Plug>(GitGutterPrevHunk)'
+
+" Space ?: these keys on one page
+let s:keys = [
+      \ 'find   Space f   ff file  fs text  fw word  fb open  fr recent  ft symbol  fp project',
+      \ 'git    Space g   gs status  gc commit  gb blame  gB file blame  gh history  gl graph',
+      \ '                 gt timeline  gd diff  gp preview  ga stage  gu undo   ]c [c next / prev',
+      \ 'code   gd F12 definition  gr references  K docs  ]e [e errors  Space ce error  Space cf format',
+      \ 'panel  Space e explorer (F2)  Space o outline (F3)  Space a AI  Space tt terminal (F4)',
+      \ 'term   Space ts below  Space tv beside   in a terminal: Ctrl+w s / v,  Ctrl+w N scroll',
+      \ 'window Ctrl+w s / v split  Ctrl+w q close  Ctrl+w = equal  Ctrl+h/j/k/l move',
+      \ 'tab    Tab / Shift+Tab  Space q close  :q close  Ctrl+s save',
+      \ 'debug  Space d   dd start/continue (F5)  db breakpoint (F9)  dn next (F10)  di in (F11)  do out',
+      \ ]
+function! s:Keys() abort
+  call popup_create(s:keys, {'title': ' keys (any key closes) ', 'border': [], 'padding': [0, 1, 0, 1],
+        \ 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'filter': function('s:KeysFilter'),
+        \ 'mapping': 0, 'zindex': 300})
+endfunction
+function! s:KeysFilter(id, key) abort
+  if a:key[0] ==# "\x80"
+    return 0  " vim's own events (cursor hold, mouse moves), not a key press
+  endif
+  call popup_close(a:id)
+  return 1
+endfunction
+nnoremap <silent> <leader>? :call <SID>Keys()<CR>
+
 " the same keys while typing or selecting (unmapped, vim would type "<F4>" into the file)
 for s:k in ['<F2>', '<F3>', '<F4>', '<F5>', '<F10>', '<F11>', '<F12>', '<C-S-f>', '<C-S-e>', '<C-M-i>']
   execute 'imap <silent>' s:k '<Esc>' . s:k
@@ -1427,8 +1485,6 @@ for s:k in ['<F2>', '<F3>', '<F4>', '<F5>', '<F10>', '<F11>', '<F12>', '<C-S-f>'
   endif
 endfor
 tnoremap <silent> <C-S-f> <C-w>:call <SID>Buf('Find')<CR>
-nmap ]e <Plug>(ale_next_wrap)
-nmap [e <Plug>(ale_previous_wrap)
 " debugger (termdebug): F5 start/continue, F9 breakpoint, F10 over, F11 step
 function! s:Debug() abort
   if exists(':RunOrContinue') == 2
@@ -1473,6 +1529,12 @@ inoremap <silent> <F9> <C-o>:call <SID>ToggleBreak()<CR>
 nnoremap <silent> <F10> :silent! Over<CR>
 nnoremap <silent> <F11> :silent! Step<CR>
 nnoremap <silent> <S-F11> :silent! Finish<CR>
+" the same on Space d, for terminals that keep the F-keys for themselves
+nnoremap <silent> <leader>dd :call <SID>Debug()<CR>
+nnoremap <silent> <leader>db :call <SID>ToggleBreak()<CR>
+nnoremap <silent> <leader>dn :silent! Over<CR>
+nnoremap <silent> <leader>di :silent! Step<CR>
+nnoremap <silent> <leader>do :silent! Finish<CR>
 
 " personal overrides
 if filereadable(expand('~/.config/vimzip/vimrc'))
