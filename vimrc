@@ -56,7 +56,8 @@ function! s:AutoSave() abort
 endfunction
 augroup vimzip_autosave
   autocmd!
-  autocmd InsertLeave,FocusLost,BufLeave * call s:AutoSave()
+  " ++nested: the write must fire BufWritePost, or linting, git signs and tags never see the save
+  autocmd InsertLeave,FocusLost,BufLeave * ++nested call s:AutoSave()
   " batch quick normal-mode edits (x, dd, ...) into one save, so linters and ctags run once
   autocmd TextChanged * call timer_stop(get(s:, 'save_timer', -1))
         \ | let s:save_timer = timer_start(1000, {-> mode() ==# 'n' ? s:AutoSave() : 0})
@@ -974,6 +975,42 @@ function! s:Outline() abort
 endfunction
 nnoremap <silent> <C-w>= :wincmd =<Bar>call <SID>Layout()<CR>
 
+" files created or removed outside vim (in the terminal, by git or a build) show up in the tree by
+" themselves: the open folders whose modification time changed are read again
+let s:tree_mtime = {}
+function! s:TreeSync(...) abort
+  if exists('g:NERDTree') && g:NERDTree.IsOpen() && mode() ==# 'n'
+    " NERDTree's own functions only work from inside its window
+    call win_execute(win_getid(g:NERDTree.GetWinNum()), 'call s:TreeSyncHere()')
+  endif
+endfunction
+function! s:TreeSyncHere() abort
+  let changed = 0
+  let todo = [b:NERDTree.root]
+  while !empty(todo)
+    let node = remove(todo, 0)
+    let dir = node.path.str()
+    let t = getftime(dir)
+    if get(s:tree_mtime, dir, t) != t
+      call node.refresh()
+      let changed = 1
+    endif
+    let s:tree_mtime[dir] = t
+    call extend(todo, filter(copy(node.children), 'v:val.path.isDirectory && v:val.isOpen'))
+  endwhile
+  if changed
+    call b:NERDTree.render()
+    silent! doautocmd <nomodeline> User FugitiveChanged
+  endif
+endfunction
+augroup vimzip_treesync
+  autocmd!
+  autocmd CursorHold,FocusGained * call s:TreeSync()
+  autocmd BufWritePost * call timer_start(0, function('s:TreeSync'))
+  autocmd WinLeave * let s:from_term = &buftype ==# 'terminal'
+  autocmd WinEnter * if get(s:, 'from_term', 0) | call timer_start(50, function('s:TreeSync')) | endif
+augroup END
+
 " keep the open tree pointed at the current file, like VSCode's explorer (focus stays in the editor)
 function! s:RevealInTree() abort
   if &buftype !=# '' || !exists('g:NERDTree') || !g:NERDTree.IsOpen()
@@ -1219,6 +1256,7 @@ augroup vimzip
   " git's versions of a file (diffs, blame, history) stay out of the tabs
   autocmd BufReadPost fugitive://* setlocal nobuflisted
   autocmd BufEnter * call s:RevealInTree()
+  autocmd BufWritePost * call timer_start(0, {-> s:RevealInTree()})
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
   " long names stay on one line, cut with … (the selected one is shown whole, see s:TreeHover)
   autocmd FileType nerdtree setlocal nowrap list listchars=extends:…
