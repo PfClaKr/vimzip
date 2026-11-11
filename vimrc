@@ -1,4 +1,5 @@
-" vimzip
+" vimzip: a portable, VSCode-like vim. Sections: basics, theme, code, git, timeline, search,
+" tree, status bar, windows, panels, terminals, projects, git marks, keys, debugger.
 set nocompatible
 let &packpath = $VIMZIP . ',' . $VIMRUNTIME
 let &runtimepath = $VIMZIP . ',' . $VIMRUNTIME . ',' . $VIMRUNTIME . '/after'
@@ -19,6 +20,7 @@ packadd osc52
 filetype plugin indent on
 syntax on
 
+" ─── basics ──────────────────────────────────────────────────────────────────────────────────────
 " basics
 set encoding=utf-8 fileencodings=ucs-bom,utf-8,cp949,latin1
 set autoindent smarttab tabstop=4 shiftwidth=4
@@ -68,6 +70,7 @@ augroup vimzip_autosave
   autocmd FocusGained,BufEnter,CursorHold * silent! checktime
 augroup END
 
+" ─── theme ───────────────────────────────────────────────────────────────────────────────────────
 " theme
 if $COLORTERM =~# 'truecolor\|24bit'
   set termguicolors
@@ -153,6 +156,7 @@ augroup END
 
 let mapleader = ' '
 
+" ─── code: linting, go to definition, tags ───────────────────────────────────────────────────────
 " ALE: clangd when available, else the system C compiler
 let s:lsp = executable('clangd')
 let g:ale_linters = {
@@ -162,7 +166,7 @@ let g:ale_linters = {
 let g:ale_lint_on_text_changed = 'never'
 let g:ale_lint_on_insert_leave = 0
 let g:ale_completion_enabled = 0
-" Space e / K: details in a popup at the cursor instead of a split
+" Space ce / K: details in a popup at the cursor instead of a split
 let g:ale_detail_to_floating_preview = 1
 let g:ale_hover_to_floating_preview = 1
 let g:ale_floating_window_border = ['│', '─', '╭', '╮', '╯', '╰', '│', '─']
@@ -226,9 +230,10 @@ let g:gutentags_file_list_command = 'vimzip-files'
 let g:gitgutter_enabled = 0
 " its keys are set with the other git keys (Space g, ]c [c)
 let g:gitgutter_map_keys = 0
-" Space hp: the hunk in a popup at the cursor
+" Space gp: the hunk in a popup at the cursor
 let g:gitgutter_preview_win_floating = 1
 
+" ─── git ─────────────────────────────────────────────────────────────────────────────────────────
 " GitLens-like: blame of the current line shown faintly after its end (Space gb toggles)
 let g:vimzip_blame = get(g:, 'vimzip_blame', 1)
 silent! call prop_type_add('vimzip_blame', {'highlight': 'VimzipBlame'})
@@ -287,6 +292,7 @@ function! s:CommitPopup() abort
   call popup_atcursor(lines, {'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
         \ 'padding': [0, 1, 0, 1], 'moved': 'any', 'maxheight': 20})
 endfunction
+" ─── timeline ────────────────────────────────────────────────────────────────────────────────────
 " Timeline under the file tree, like VSCode (Space gt): commits that touched the current file.
 " Enter opens that commit's change as a side-by-side diff; q in the diff goes back.
 let s:tl = {'buf': -1, 'file': '', 'items': [], 'at': 0}
@@ -470,7 +476,7 @@ function! s:TimelineCloseDiff(...) abort
     endif
   endfor
 endfunction
-" quit when only the tree and timeline are left
+" only side panels left (the last editor window closed): show a file again, or leave vim after :q
 function! s:QuitIfOnlyPanels() abort
   if getcmdwintype() !=# '' || mode() !=# 'n' && mode() !=# 't'
     return
@@ -517,6 +523,7 @@ augroup vimzip_blame
   autocmd CursorMoved,CursorMovedI,InsertEnter,BufLeave * if exists('s:blame_at') | call s:BlameClear() | endif
 augroup END
 
+" ─── search ──────────────────────────────────────────────────────────────────────────────────────
 " fzf
 let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --glob "!.git"'
 
@@ -537,6 +544,7 @@ function! s:FindText(text) abort
   call s:Find(empty(text) ? '' : text[0], 0, 1)
 endfunction
 
+" ─── file tree ───────────────────────────────────────────────────────────────────────────────────
 " nerdtree
 let g:NERDTreeHijackNetrw = 0
 let g:NERDTreeShowHidden = 1
@@ -618,6 +626,7 @@ endfunction
 " termdebug
 let g:termdebug_config = {'wide': 1}
 
+" ─── tab bar and status bar ──────────────────────────────────────────────────────────────────────
 " lightline draws only the tab bar; the status bar is ours (below)
 let g:lightline = {
   \ 'colorscheme': 'vimzip',
@@ -682,7 +691,8 @@ let g:NERDTreeMouseMode = 3
 " One status bar for the whole screen (vim has no laststatus=3 as Neovim does).
 " The status lines along the bottom edge together draw the bar for the current window: its
 " left part in the leftmost one, its right part in the rightmost, plain bar in between.
-" A window with another window below it gets a thin title instead (EXPLORER, TIMELINE, file).
+" A window with another window below it gets a thin title row naming that lower window, like
+" VSCode's panel headers (TIMELINE, TERMINAL, ...).
 set laststatus=2 statusline=%!VimzipStatus()
 " the bar may sit in another window's status line, so redraw them all as the cursor or mode changes
 augroup vimzip_status
@@ -719,7 +729,6 @@ endfunction
 function! s:Esc(text) abort
   return substitute(a:text, '%', '%%', 'g')
 endfunction
-" evaluated in the current window, for the window g:statusline_winid
 " the editor the bar describes: the current window, or the last file window when a panel has focus
 " (a %! expression runs in the current window's context, so read everything through this id)
 function! s:EditorWin() abort
@@ -880,6 +889,7 @@ function! s:BarRefresh() abort
   unlet! s:bar_now
 endfunction
 
+" ─── windows, tabs and quitting ──────────────────────────────────────────────────────────────────
 " switch/close buffers without touching the tree or terminal windows
 function! s:EditWin() abort
   if &buftype !=# '' || exists('b:NERDTree')
@@ -954,6 +964,7 @@ cnoreabbrev <expr> q getcmdtype() ==# ':' && getcmdline() ==# 'q' ? 'VimzipQuit'
 cnoreabbrev <expr> wq getcmdtype() ==# ':' && getcmdline() ==# 'wq' ? 'VimzipWriteQuit' : 'wq'
 cnoreabbrev <expr> x getcmdtype() ==# ':' && getcmdline() ==# 'x' ? 'VimzipWriteQuit' : 'x'
 
+" ─── panels: terminal, AI agent, sizes ───────────────────────────────────────────────────────────
 " bottom terminal panel
 function! s:ToggleTerm() abort
   let t = get(s:, 'term', -1)
@@ -1016,11 +1027,10 @@ function! s:ToggleAi() abort
   call s:Layout()
 endfunction
 
-" panel sizes follow the screen: side panels shrink on small screens so the editor keeps 40
-" columns (on a very narrow screen the tree steps aside until there is room again), and the
-" terminal panel keeps about a third of the height. Runs on resize, Ctrl+w = and panel toggles.
-" panel sizes: the size you gave a panel (dragging its edge, Ctrl+w < >) is kept, otherwise a
-" default that follows the screen; Ctrl+w = goes back to the defaults
+" Panel sizes: the size you gave a panel (dragging its edge, Ctrl+w < >) is kept, otherwise a
+" default that follows the screen. Side panels shrink on small screens so the editor keeps 40
+" columns (on a very narrow one the tree steps aside until there is room again). Runs on resize,
+" panel toggles and when windows open or close; Ctrl+w = goes back to the defaults.
 let s:pref = {}
 let s:set = {}
 function! s:Kind(n) abort
@@ -1167,6 +1177,7 @@ function! s:Equalize() abort
 endfunction
 nnoremap <silent> <C-w>= :call <SID>Equalize()<CR>
 
+" ─── tree sync, completion, terminals ────────────────────────────────────────────────────────────
 " files created or removed outside vim (in the terminal, by git or a build) show up in the tree by
 " themselves: the open folders whose modification time changed are read again
 let s:tree_mtime = {}
@@ -1293,6 +1304,7 @@ function! s:TermKeys() abort
   nnoremap <buffer> <silent> p i<C-w>""
 endfunction
 
+" ─── sessions and projects ───────────────────────────────────────────────────────────────────────
 " per-folder session, used when started as `vim <dir>`
 function! s:SessionFile() abort
   return s:cache . '/sessions/' . substitute(getcwd(), '[/\\:]', '%', 'g') . '.vim'
@@ -1342,7 +1354,7 @@ function! s:Save() abort
   execute 'mksession!' fnameescape(s:session)
 endfunction
 
-" switch project in place (Space p / :Project): save this one's tabs, close its tabs, terminals
+" switch project in place (Space fp / :Project): save this one's tabs, close its tabs, terminals
 " and AI panel, then open the other folder and restore its tabs
 function! s:OpenProject(dir) abort
   let dir = fnamemodify(expand(trim(a:dir)), ':p')
@@ -1391,6 +1403,7 @@ function! s:TermOpen(buf) abort
   endif
 endfunction
 
+" ─── git marks at the window edge, tree hover ────────────────────────────────────────────────────
 " git change marks at the right edge of each window, like VSCode's scrollbar: the whole file is
 " scaled to the window height; one popup per window, transparent (masked) where there is no mark
 for s:k in ['Add', 'Change', 'Delete']
@@ -1511,6 +1524,7 @@ augroup vimzip_hover
   autocmd WinLeave * call s:TreeHoverClose()
 augroup END
 
+" ─── keys ────────────────────────────────────────────────────────────────────────────────────────
 " keys: vim's own keys where vim has one (gd, gr, K, ]c, ]e, Ctrl+w ...), VSCode's F-keys and
 " Ctrl+ combinations, and Space + a letter per group (f find, g git, c code, t terminal, d debug)
 
@@ -1635,6 +1649,7 @@ for s:m in ['n', 'x', 'i', 't']
   execute s:m . 'noremap <C-f> <C-f>'
   execute s:m . 'noremap <C-e> <C-e>'
 endfor
+" ─── debugger ────────────────────────────────────────────────────────────────────────────────────
 " debugger (termdebug): F5 start/continue, F9 breakpoint, F10 over, F11 step
 function! s:Debug() abort
   if exists(':RunOrContinue') == 2
@@ -1686,6 +1701,7 @@ nnoremap <silent> <leader>dn :silent! Over<CR>
 nnoremap <silent> <leader>di :silent! Step<CR>
 nnoremap <silent> <leader>do :silent! Finish<CR>
 
+" ─── personal overrides ──────────────────────────────────────────────────────────────────────────
 " personal overrides
 if filereadable(expand('~/.config/vimzip/vimrc'))
   execute 'source' fnameescape(expand('~/.config/vimzip/vimrc'))

@@ -31,6 +31,6 @@ jobs:
           branch: update-versions
           commit-message: 'chore: bump tool versions'
           title: 'chore: bump tool versions'
-          body: 'versions.env 최신 태그로 갱신 (빌드 통과)'
+          body: 'Bump versions.env to the latest tags (build passed)'
           add-paths: versions.env
           delete-branch: true
