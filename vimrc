@@ -1587,6 +1587,10 @@ nnoremap <C-l> <C-w>l
 " code: vim's gd / gr / K / ]e [e, VSCode's F12, Space c for the rest
 nnoremap <silent> <F12> :call <SID>GoDef()<CR>
 nnoremap <silent> gd :call <SID>GoDef()<CR>
+" :Man page (K without clangd)
+if executable('man')
+  runtime ftplugin/man.vim
+endif
 if s:lsp
   nnoremap <silent> gr :ALEFindReferences<CR>
   nnoremap <silent> K :ALEHover<CR>
@@ -1595,7 +1599,6 @@ else
   " overwriting text), K = the man page in a split instead of a full-screen shell
   nnoremap <silent> gr :call <SID>FindText(expand('<cword>'))<CR>
   if executable('man')
-    runtime ftplugin/man.vim
     set keywordprg=:Man
   else
     nnoremap <silent> K :echo 'No documentation: clangd or man is needed'<CR>

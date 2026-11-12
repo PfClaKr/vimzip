@@ -31,7 +31,7 @@ Opens the file tree and the files you had open last time. Files save themselves.
 - **Debug**: gdb with breakpoints (`F5`, `F9`, `F10`, `F11`)
 
 Vim's own keys all work. The added ones are grouped under `Space` by topic (`f` find, `g` git,
-`c` code, `t` terminal, `d` debug). **`Space ?` shows every key.**
+`c` code, `t` terminal, `d` debug). **`Space ?` shows every key and `:` command.**
 
 ![Space ?](docs/keys.png)
 
