@@ -70,6 +70,43 @@ augroup vimzip_autosave
   autocmd FocusGained,BufEnter,CursorHold * silent! checktime
 augroup END
 
+" ─── resources ─────────────────────────────────────────────────────────────────────────────────
+" The CPUs and memory this vim may use: the CPUs it may run on, capped by a container's cgroup
+" quota, and the free memory, capped by a cgroup limit (cgroup v2 or v1). Under 2 CPUs or 1 GB free
+" vimzip runs light (see s:Light at the end); g:vimzip_lite = 1 / 0 or $VIMZIP_LITE forces it.
+function! s:FirstLine(file) abort
+  return filereadable(a:file) ? get(readfile(a:file, '', 1), 0, '') : ''
+endfunction
+function! s:Resources(cg) abort
+  let cpus = 0
+  for part in split(matchstr(join(filter(readfile('/proc/self/status'), 'v:val =~# "^Cpus_allowed_list"')), ':\s*\zs\S*'), ',')
+    let [a, b] = (split(part, '-') + [part])[0 : 1]
+    let cpus += str2nr(b) - str2nr(a) + 1
+  endfor
+  let cpus = cpus ? cpus * 1.0 : 1.0
+  let quota = split(s:FirstLine(a:cg . '/cpu.max'))
+  if len(quota) == 2 && quota[0] =~# '^\d\+$'
+    let cpus = min([cpus, str2float(quota[0]) / str2float(quota[1])])
+  elseif str2nr(s:FirstLine(a:cg . '/cpu/cpu.cfs_quota_us')) > 0
+    let cpus = min([cpus, str2float(s:FirstLine(a:cg . '/cpu/cpu.cfs_quota_us'))
+          \ / str2float(s:FirstLine(a:cg . '/cpu/cpu.cfs_period_us'))])
+  endif
+  let mem = str2nr(matchstr(join(filter(readfile('/proc/meminfo'), 'v:val =~# "^MemAvailable"')), '\d\+')) / 1024
+  let mem = mem > 0 ? mem : 1000000
+  for [limit, used] in [['/memory.max', '/memory.current'], ['/memory/memory.limit_in_bytes', '/memory/memory.usage_in_bytes']]
+    let l = s:FirstLine(a:cg . limit)
+    if l =~# '^\d\+$' && str2float(l) < 1.0e15  " a real limit, not 'max' or the v1 'no limit' number
+      let mem = min([mem, float2nr((str2float(l) - str2float(s:FirstLine(a:cg . used))) / 1048576.0)])
+      break
+    endif
+  endfor
+  return {'cpus': cpus, 'mem': mem}
+endfunction
+let s:res = s:Resources('/sys/fs/cgroup')
+" threads for rg: the CPUs vim may use, not every core of the host
+let s:jobs = max([1, float2nr(ceil(s:res.cpus))])
+let $VIMZIP_JOBS = s:jobs
+
 " ─── theme ───────────────────────────────────────────────────────────────────────────────────────
 " theme
 if $COLORTERM =~# 'truecolor\|24bit'
@@ -158,11 +195,9 @@ let mapleader = ' '
 
 " ─── code: linting, go to definition, tags ───────────────────────────────────────────────────────
 " ALE: clangd when available, else the system C compiler
+" (clangd or not is settled at the end, with the resources: see s:Light)
 let s:lsp = executable('clangd')
-let g:ale_linters = {
-  \ 'c': s:lsp ? ['clangd'] : ['cc'],
-  \ 'cpp': s:lsp ? ['clangd'] : ['cc'],
-  \ 'sh': ['shellcheck']}
+let g:ale_linters = {'c': ['cc'], 'cpp': ['cc'], 'sh': ['shellcheck']}
 let g:ale_lint_on_text_changed = 'never'
 let g:ale_lint_on_insert_leave = 0
 let g:ale_completion_enabled = 0
@@ -170,9 +205,7 @@ let g:ale_completion_enabled = 0
 let g:ale_detail_to_floating_preview = 1
 let g:ale_hover_to_floating_preview = 1
 let g:ale_floating_window_border = ['│', '─', '╭', '╮', '╯', '╰', '│', '─']
-if s:lsp
-  autocmd FileType c,cpp setlocal omnifunc=ale#completion#OmniFunc
-endif
+autocmd FileType c,cpp if s:lsp | setlocal omnifunc=ale#completion#OmniFunc | endif
 
 " system headers: read-only, no linting
 let g:ale_pattern_options = {'^/usr/': {'ale_enabled': 0}}
@@ -525,12 +558,12 @@ augroup END
 
 " ─── search ──────────────────────────────────────────────────────────────────────────────────────
 " fzf
-let $FZF_DEFAULT_COMMAND = 'rg --files --hidden --glob "!.git"'
+let $FZF_DEFAULT_COMMAND = 'rg -j ' . s:jobs . ' --files --hidden --glob "!.git"'
 
 " project search: run rg only while there is a query (fzf.vim's :RG greps every line on an empty one)
 function! s:Find(query, bang, ...) abort
   " a:1: match the text as typed (no regex)
-  let rg = 'rg --column --line-number --no-heading --color=always --smart-case --hidden --glob "!.git" '
+  let rg = 'rg -j ' . s:jobs . ' --column --line-number --no-heading --color=always --smart-case --hidden --glob "!.git" '
         \ . (get(a:, 1, 0) ? '--fixed-strings ' : '') . '-- '
   let reload = '[ -z {q} ] || ' . rg . '{q} || :'
   call fzf#vim#grep(':', fzf#vim#with_preview({'options': ['--disabled', '--query', a:query,
@@ -1264,7 +1297,8 @@ function! s:Words() abort
     call s:UseWords(f)
   endif
   let cmd = 'root=$(git -C ' . shellescape(getcwd()) . ' rev-parse --show-toplevel 2>/dev/null) || exit 1; '
-        \ . 'rg --no-filename --no-line-number --only-matching --max-filesize 1M' . s:src_types
+        \ . (s:lite ? 'nice -n 10 ' : '') . 'rg -j ' . s:jobs
+        \ . ' --no-filename --no-line-number --only-matching --max-filesize 1M' . s:src_types
         \ . ' "[A-Za-z_][A-Za-z0-9_]{2,39}\b" "$root" | LC_ALL=C sort -u > ' . shellescape(f . '.tmp')
         \ . ' && mv ' . shellescape(f . '.tmp') . ' ' . shellescape(f)
   let s:words_job = job_start(['sh', '-c', cmd], {'exit_cb': {j, s -> s ? 0 : s:UseWords(f)}})
@@ -1280,6 +1314,7 @@ function! VimzipWords(findstart, base) abort
     return match(col('.') > 1 ? getline('.')[: col('.') - 2] : '', '\k*$')
   endif
   if len(a:base) < 2 || !filereadable(get(s:, 'words_file', ''))
+    call s:Words()  " light mode builds the list only when it is first wanted
     return []
   endif
   let hits = systemlist('grep -m 200 ' . (&ignorecase ? '-i ' : '') . '-e '
@@ -1475,7 +1510,7 @@ augroup vimzip
   autocmd VimEnter * call s:FastNERDTree()
   autocmd VimEnter * ++nested call s:Start()
   autocmd VimEnter * call timer_start(0, {-> execute('silent! GitGutterEnable')})
-  autocmd VimEnter,BufWritePost * call s:Words()
+  autocmd VimEnter,BufWritePost * if !s:lite | call s:Words() | endif
   autocmd VimLeavePre * call s:Save()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
   autocmd User ALELintPost call s:BarRefresh()
@@ -1591,19 +1626,26 @@ nnoremap <silent> gd :call <SID>GoDef()<CR>
 if executable('man')
   runtime ftplugin/man.vim
 endif
-if s:lsp
-  nnoremap <silent> gr :ALEFindReferences<CR>
-  nnoremap <silent> K :ALEHover<CR>
-else
-  " without clangd: references = the word searched in the project (vim's own gr would start
-  " overwriting text), K = the man page in a split instead of a full-screen shell
-  nnoremap <silent> gr :call <SID>FindText(expand('<cword>'))<CR>
-  if executable('man')
-    set keywordprg=:Man
+" with clangd in C/C++: its references and hover; otherwise the word searched in the project
+" (vim's own gr would start overwriting text) and the man page in a split
+function! s:Refs() abort
+  if s:lsp && &filetype =~# '^\(c\|cpp\)$'
+    ALEFindReferences
   else
-    nnoremap <silent> K :echo 'No documentation: clangd or man is needed'<CR>
+    call s:FindText(expand('<cword>'))
   endif
-endif
+endfunction
+function! s:Docs() abort
+  if s:lsp && &filetype =~# '^\(c\|cpp\)$'
+    ALEHover
+  elseif exists(':Man') == 2
+    execute 'Man' expand('<cword>')
+  else
+    echo 'No documentation: clangd or man is needed'
+  endif
+endfunction
+nnoremap <silent> gr :call <SID>Refs()<CR>
+nnoremap <silent> K :call <SID>Docs()<CR>
 nmap ]e <Plug>(ale_next_wrap)
 nmap [e <Plug>(ale_previous_wrap)
 nnoremap <silent> <leader>ce :ALEDetail<CR>
@@ -1706,7 +1748,44 @@ nnoremap <silent> <leader>do :silent! Finish<CR>
 
 " ─── personal overrides ──────────────────────────────────────────────────────────────────────────
 " personal overrides
+let s:blame_default = g:vimzip_blame
 if filereadable(expand('~/.config/vimzip/vimrc'))
   execute 'source' fnameescape(expand('~/.config/vimzip/vimrc'))
 endif
+
+" ─── light mode ─────────────────────────────────────────────────────────────────────────────────
+" On a small machine (s:res, under 2 CPUs or 1 GB free) do less in the background: line blame
+" starts off (Space gb), files are checked when saved rather than also when opened, the tree's
+" git colors and the change marks refresh less often, the completion word list is built when
+" first used, and clangd runs without its background index, or not at all under 1 GB free.
+" :VimzipInfo shows what was found and chosen.
+function! s:Light() abort
+  let auto = s:res.cpus < 2 || s:res.mem < 1024
+  let s:lite = exists('g:vimzip_lite') ? g:vimzip_lite : $VIMZIP_LITE !=# '' ? str2nr($VIMZIP_LITE) : auto
+  let s:lsp = executable('clangd') && !(s:lite && s:res.mem < 1024)
+  let g:ale_linters.c = s:lsp ? ['clangd'] : ['cc']
+  let g:ale_linters.cpp = g:ale_linters.c
+  if !s:lite
+    return
+  endif
+  set updatetime=1000
+  if g:vimzip_blame == s:blame_default
+    let g:vimzip_blame = 0
+  endif
+  let g:ale_lint_on_enter = 0
+  let g:NERDTreeGitStatusUpdateOnCursorHold = 0
+  let g:ale_c_clangd_options = '--background-index=false -j=1'
+  let g:ale_cpp_clangd_options = g:ale_c_clangd_options
+endfunction
+call s:Light()
+function! s:Info() abort
+  echo printf('CPUs %.1f, free memory %d MB: %s mode', s:res.cpus, s:res.mem, s:lite ? 'light' : 'full')
+  echo printf('rg threads %d, clangd %s, line blame %s, lint %s', s:jobs,
+        \ !executable('clangd') ? 'not installed' : !s:lsp ? 'off (memory)' : s:lite ? 'on, no background index' : 'on',
+        \ g:vimzip_blame ? 'on' : 'off', get(g:, 'ale_lint_on_enter', 1) ? 'on open and save' : 'on save')
+  if s:lite
+    echo 'g:vimzip_lite = 0 in ~/.config/vimzip/vimrc turns light mode off'
+  endif
+endfunction
+command! -bar VimzipInfo call s:Info()
 call s:Highlights()

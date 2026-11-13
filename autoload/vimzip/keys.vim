@@ -180,6 +180,7 @@ let s:vim = [
 " commands typed after :
 let s:plugin_cmds = [
       \ ['vimzip', [
+      \   [':VimzipInfo', 'CPUs, memory, light or full mode'],
       \   [':Find text', 'search the project'],
       \   [':Project path', 'open another project'],
       \   [':Theme name', 'status bar colors (:Theme lists)']]],
