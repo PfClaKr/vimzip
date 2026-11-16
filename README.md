@@ -56,8 +56,11 @@ gives both the build's include paths.
 
 ```sh
 rm -rf ~/vimzip && curl -fsSL https://github.com/PfClaKr/vimzip/releases/latest/download/vimzip-linux-x86_64.tar.gz | tar -xz -C ~
-rm -rf ~/vimzip ~/.local/bin/vim    # uninstall; also remove the '# vimzip' lines from ~/.bashrc
+rm -rf ~/vimzip ~/.local/bin/vim ~/.cache/vimzip    # uninstall; also remove the '# vimzip' lines from ~/.bashrc
 ```
+
+Undo history, sessions and tags live in `~/.cache/vimzip`. Entries unused for 90 days (tags, words)
+or a year (undo, sessions) are removed automatically; `:VimzipInfo` shows the size.
 
 ## Compared to VSCode
 
