@@ -1505,8 +1505,40 @@ augroup vimzip_ruler
   autocmd WinResized,VimResized,WinClosed,TabEnter,BufWinEnter * call s:RulerLater()
 augroup END
 
+" cache cleanup, at most once a day: regenerable caches (tags, words) go after 90 unused days,
+" undo history and sessions after a year, or a month once their file or folder is gone
+function! s:Prune(...) abort
+  let stamp = s:cache . '/.pruned'
+  if localtime() - getftime(stamp) < 86400 | return | endif
+  call writefile([], stamp)
+  let day = 86400
+  let Path = {f -> substitute(fnamemodify(f, ':t:r'), '%', '/', 'g')}
+  let rules = [['undo/*', 365, {f -> filereadable(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}],
+        \      ['sessions/*.vim', 365, {f -> isdirectory(Path(f))}],
+        \      ['words/*.txt', 90, {f -> isdirectory(Path(f))}],
+        \      ['systags/*.tags', 90, {f -> filereadable(Path(f))}],
+        \      ['tags/*-tags', 90, {f -> 1}],
+        \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}]]
+  for [pat, days, Exists] in rules
+    for f in glob(s:cache . '/' . pat, 1, 1)
+      let age = (localtime() - getftime(f)) / day
+      if age > days || (age > min([days, 30]) && !Exists(f))
+        call delete(f)
+      endif
+    endfor
+  endfor
+endfunction
+function! s:CacheSize() abort
+  let total = 0
+  for f in glob(s:cache . '/*/*', 1, 1)
+    let total += max([0, getfsize(f)])
+  endfor
+  return total / 1048576
+endfunction
+
 augroup vimzip
   autocmd!
+  autocmd VimEnter * call timer_start(5000, function('s:Prune'))
   autocmd VimEnter * call s:FastNERDTree()
   autocmd VimEnter * ++nested call s:Start()
   autocmd VimEnter * call timer_start(0, {-> execute('silent! GitGutterEnable')})
@@ -1783,6 +1815,7 @@ function! s:Info() abort
   echo printf('rg threads %d, clangd %s, line blame %s, lint %s', s:jobs,
         \ !executable('clangd') ? 'not installed' : !s:lsp ? 'off (memory)' : s:lite ? 'on, no background index' : 'on',
         \ g:vimzip_blame ? 'on' : 'off', get(g:, 'ale_lint_on_enter', 1) ? 'on open and save' : 'on save')
+  echo printf('cache %d MB in %s (old entries are removed daily)', s:CacheSize(), fnamemodify(s:cache, ':~'))
   if s:lite
     echo 'g:vimzip_lite = 0 in ~/.config/vimzip/vimrc turns light mode off'
   endif
