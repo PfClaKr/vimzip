@@ -261,6 +261,16 @@ let g:gutentags_file_list_command = 'vimzip-files'
 
 " gitgutter: its first git calls block while vim starts, so turn it on after the first screen
 let g:gitgutter_enabled = 0
+" its :GitGutterEnable diffs every listed buffer, also a restored session's unloaded ones: they
+" read as empty, so each diff is the whole file (30 big files froze vim for 4 s). Diff the visible
+" ones; the rest are diffed when shown.
+function! s:GitGutterOn() abort
+  for b in getbufinfo({'buflisted': 1})
+    call gitgutter#utility#setbufvar(b.bufnr, 'enabled', 1)
+  endfor
+  let g:gitgutter_enabled = 1
+  call gitgutter#all(1)
+endfunction
 " its keys are set with the other git keys (Space g, ]c [c)
 let g:gitgutter_map_keys = 0
 " Space gp: the hunk in a popup at the cursor
@@ -1541,7 +1551,7 @@ augroup vimzip
   autocmd VimEnter * call timer_start(5000, function('s:Prune'))
   autocmd VimEnter * call s:FastNERDTree()
   autocmd VimEnter * ++nested call s:Start()
-  autocmd VimEnter * call timer_start(0, {-> execute('silent! GitGutterEnable')})
+  autocmd VimEnter * call timer_start(0, {-> s:GitGutterOn()})
   autocmd VimEnter,BufWritePost * if !s:lite | call s:Words() | endif
   autocmd VimLeavePre * call s:Save()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
