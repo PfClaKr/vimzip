@@ -29,6 +29,18 @@ set hidden autoread mouse=a belloff=all splitright splitbelow
 set laststatus=2 showtabline=2 noshowmode showcmd noruler
 " long lines wrap at word boundaries, continued under their own indent
 set linebreak breakindent breakindentopt=shift:4
+" except in minified or generated files (a 6 MB line of JSON): word wrap and the bracket match
+" walk the whole line on every redraw, seconds per key
+function! s:LongLines() abort
+  if &buftype ==# '' && !empty(filter(range(1, min([line('$'), 100])), 'col([v:val, "$"]) > 3000'))
+    setlocal nolinebreak nobreakindent
+    let [b:matchparen_timeout, b:matchparen_insert_timeout] = [20, 20]
+  endif
+endfunction
+augroup vimzip_long
+  autocmd!
+  autocmd BufWinEnter * call s:LongLines()
+augroup END
 set fillchars+=vert:│
 " no window narrower than its line-number gutter: vim divides by zero (crashes) laying out a
 " window exactly that wide
@@ -326,12 +338,19 @@ function! s:BlameShow(buf, lnum, out) abort
 endfunction
 " commit of the current line in a popup (Space gc)
 function! s:CommitPopup() abort
-  let out = systemlist('git -C ' . shellescape(expand('%:p:h')) . ' blame --porcelain -L ' . line('.') . ',' . line('.')
-        \ . ' -- ' . shellescape(expand('%:t')))
+  let git = 'git -C ' . shellescape(expand('%:p:h'))
+  let out = systemlist(git . ' blame --porcelain -L ' . line('.') . ',' . line('.') . ' -- ' . shellescape(expand('%:t')))
   if v:shell_error || empty(out) | return | endif
   let sha = matchstr(out[0], '^\x\+')
-  let lines = sha =~# '^0\+$' ? ['Uncommitted changes'] : systemlist('git -C ' . shellescape(expand('%:p:h'))
-        \ . ' show --stat --no-color --format=' . shellescape('%h  %an, %ar%n%n%B') . ' ' . sha)
+  let show = git . ' show --no-color --format=' . shellescape('%h  %an, %ar%n%n%B') . ' '
+  if sha =~# '^0\+$'
+    let lines = ['Uncommitted changes']
+  else
+    " --stat diffs every file: 12 s for a 190000-file import, so a big commit lists its first files
+    let files = systemlist(git . ' show --no-color --format= --name-only ' . sha)
+    let lines = len(files) <= 100 ? systemlist(show . '--stat ' . sha)
+          \ : systemlist(show . '-s ' . sha) + map(files[:19], '" " . v:val') + [printf(' ... %d files changed', len(files))]
+  endif
   call popup_atcursor(lines, {'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
         \ 'padding': [0, 1, 0, 1], 'moved': 'any', 'maxheight': 20})
 endfunction
@@ -597,6 +616,10 @@ let g:NERDTreeWinSize = 30
 let g:NERDTreeStatusline = -1
 let g:tagbar_no_status_line = 1
 let g:tagbar_compact = 2
+" at most 1000 symbols: thousands took seconds each (see vimzip-ctags); none for files over 3 MB,
+" which ctags alone takes seconds to read
+let g:tagbar_ctags_bin = $VIMZIP . '/bin/vimzip-ctags'
+let g:tagbar_file_size_limit = 3000000
 " fzf preview beside the list, or above it when it would be under 40 columns wide (a narrow screen)
 let g:fzf_preview_window = ['right,50%,<40(up,50%)', 'ctrl-/']
 " a taller popup than fzf.vim's 60%, so the preview shows more of the file
@@ -786,19 +809,29 @@ function! s:EditorWin() abort
   return empty(files) ? 0 : win_getid(files[0])
 endfunction
 " the window's status line is on the screen's last row (a winbar, like the debugger's, adds a row)
+" (no window under it; not getwininfo(), which lays out the window's lines: 11 ms each in a long one)
 function! s:AtBottom(w) abort
-  return win_screenpos(a:w)[0] + get(getwininfo(a:w), 0, {'winbar': 0}).winbar + winheight(a:w) >= &lines - &cmdheight
+  let [row, col] = win_screenpos(a:w)
+  let right = col + winwidth(a:w)
+  for n in range(1, winnr('$'))
+    let [r, c] = win_screenpos(n)
+    if r > row && c < right && c + winwidth(n) > col
+      return 0
+    endif
+  endfor
+  return 1
 endfunction
 " the window that starts right under this one's status line, in the same column
 function! s:Below(w) abort
   let [row, col] = win_screenpos(a:w)
-  let top = row + getwininfo(a:w)[0].winbar + winheight(a:w) + 1
+  let [below, top] = [0, &lines]
   for n in range(1, winnr('$'))
-    if win_screenpos(n) == [top, col]
-      return win_getid(n)
+    let [r, c] = win_screenpos(n)
+    if c == col && r > row && r < top
+      let [below, top] = [win_getid(n), r]
     endif
   endfor
-  return 0
+  return below
 endfunction
 function! VimzipStatus() abort
   let w = g:statusline_winid
@@ -875,7 +908,9 @@ function! s:BarLayout() abort
   endif
   let [et, sw, ts] = [getbufvar(b, '&expandtab'), getbufvar(b, '&shiftwidth'), getbufvar(b, '&tabstop')]
   let [fenc, ff, ft] = [getbufvar(b, '&fileencoding'), getbufvar(b, '&fileformat'), getbufvar(b, '&filetype')]
-  let items = [printf('Ln %d, Col %d', line('.', e), virtcol('.', 0, e)),
+  " virtcol() measures the line from its start: 90 ms per redraw deep in a 6 MB minified line
+  let c = col('.', e)
+  let items = [printf('Ln %d, Col %d', line('.', e), c > 2000 ? c : virtcol('.', 0, e)),
         \ et ? 'Spaces: ' . (sw ? sw : ts) : 'Tab Size: ' . ts,
         \ toupper(fenc !=# '' ? fenc : &encoding),
         \ get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, ff, ff),
@@ -928,7 +963,9 @@ function! s:BarRefresh() abort
   unlet! s:bar_now
   let s:bar_now = s:BarLayout()
   call s:BarJoins()
-  redrawstatus!
+  " mark every status line for the next screen update: :redrawstatus! updates the whole screen now,
+  " once more per event (0.4 s each in a 6 MB minified line)
+  let &g:statusline = &g:statusline
   unlet! s:bar_now
 endfunction
 
