@@ -17,7 +17,7 @@ cp vimrc "$D/vimrc"
 # not used here: the tutor and non-UTF-8 spell files
 rm -rf "$D/runtime/tutor" "$D"/runtime/spell/*.ascii.* "$D"/runtime/spell/*.latin1.*
 cp vim install.sh "$D/"
-cp vimzip-files "$D/bin/"
+cp vimzip-files vimzip-ctags "$D/bin/"
 cp -r autoload themes "$D/"
 
 # smoke test + help tags

@@ -1,0 +1,4 @@
+#!/bin/sh
+# ctags for the outline (F3): files with thousands of symbols (generated code, register headers)
+# took tagbar a second per thousand, so it gets the first 1000, in file order
+"${0%/*}/ctags" "$@" | head -n "${VIMZIP_OUTLINE_MAX:-1000}"
