@@ -48,9 +48,15 @@ On a small machine (under 2 CPUs or 1 GB of free memory, container limits includ
 light: less work in the background, line blame off until `Space gb`. `:VimzipInfo` shows what it
 found; `let g:vimzip_lite = 0` (or `1`) decides for it.
 
-`:Theme` lists the status bar themes and `:Theme nord` tries one. With clangd installed it is used
-for errors and definitions. For CMake projects, `cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`
-gives both the build's include paths.
+`:Theme` lists the status bar themes and `:Theme nord` tries one.
+
+Language servers give errors, `gd`, `gr`, `K` and completion (`Ctrl+x Ctrl+o`). vimzip uses one
+when it is installed: clangd (C/C++), rust-analyzer, pyright or pylsp (Python), gopls, dart (Dart
+and Flutter), tsserver (TypeScript/JS), lua-language-server, bash-language-server and zls.
+`:Lsp` (or `Space cl`) lists them and turns one on or off; `:Lsp rust off` does it directly, and
+the choice is kept. Defaults can go in the vimrc: `let g:vimzip_lsp = {'python': 'pylsp', 'go': 0}`.
+For CMake projects, `cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` gives clangd the build's
+include paths.
 
 ## Update and uninstall
 
