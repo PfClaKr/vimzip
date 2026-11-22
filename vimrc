@@ -628,7 +628,9 @@ function! s:TimelineUpdate() abort
     return
   endif
   let [dir, name, out] = [shellescape(fnamemodify(f, ':h')), shellescape(fnamemodify(f, ':t')), []]
-  let cmd = 'cd ' . dir . ' && git status --porcelain -- ' . name . '; echo @@; git -c core.quotepath=false log --follow -n 300 --name-only'
+  " (no optional locks: a status refreshing the index right after a save made a git commit typed in
+  " the terminal at that moment fail with index.lock)
+  let cmd = 'cd ' . dir . ' && GIT_OPTIONAL_LOCKS=0 git status --porcelain -- ' . name . '; echo @@; git -c core.quotepath=false log --follow -n 300 --name-only'
         \ . ' --format=%x01%h%x09%at%x09%an%x09%s -- ' . name
   call job_start(['sh', '-c', cmd], {'err_io': 'null', 'out_cb': {_, l -> add(out, l)},
         \ 'close_cb': {_ -> s:TimelineRender(f, out)}})
@@ -815,6 +817,9 @@ let g:NERDTreeWinSize = 30
 " every 0.3 s, 0.5 s of vim each time with 10000 changed files); after a save, and when the folders
 " or git's index or HEAD change (a commit in the terminal, see s:TreeSyncHere)
 let g:NERDTreeGitStatusUpdateOnCursorHold = 0
+" a failed background status (any line on git's stderr) is not an error message in the middle of
+" typing: the colors are redone at the next save, or within 30 s
+let g:NERDTreeGitStatusLogLevel = 4
 " and its parsing of `git status`, three function calls a line (0.5 s for 10000 changed files),
 " done again in one loop once its file is loaded: the same result, several times faster
 let s:git_keys = {'DD': 'Unmerged', 'AU': 'Unmerged', 'UD': 'Unmerged', 'UA': 'Unmerged',
@@ -1901,8 +1906,29 @@ function! s:CacheSize() abort
   return total / 1048576
 endfunction
 
+" a file opened in a side panel's window (:e or :b typed in the tree) took the panel's place: the
+" panel goes back, the file to the editor
+let s:panels = ['nerdtree', 'tagbar', 'vimziptimeline']
+function! s:KeepPanel(win, buf) abort
+  let prev = getbufvar(a:buf, '&buftype') ==# '' ? win_execute(a:win, 'echon bufnr("#")') : ''
+  if win_getid() != a:win || winbufnr(0) != a:buf || prev ==# '' || prev < 1
+        \ || index(s:panels, getbufvar(str2nr(prev), '&filetype')) < 0
+    return
+  endif
+  let editors = filter(range(1, winnr('$')), 'v:val != winnr() && getbufvar(winbufnr(v:val), "&buftype") ==# ""
+        \ && index(s:panels, getbufvar(winbufnr(v:val), "&filetype")) < 0')
+  if empty(editors)
+    return
+  endif
+  let editor = index(map(copy(editors), 'win_getid(v:val)'), get(s:, 'editor', 0)) >= 0 ? s:editor : win_getid(editors[0])
+  execute 'buffer' prev
+  call win_gotoid(editor)
+  execute 'buffer' a:buf
+endfunction
+
 augroup vimzip
   autocmd!
+  autocmd BufEnter * let s:enter = [win_getid(), bufnr('')] | call timer_start(0, {-> s:KeepPanel(s:enter[0], s:enter[1])})
   autocmd VimEnter * call timer_start(5000, function('s:Prune'))
   autocmd VimEnter * call s:FastNERDTree()
   autocmd VimEnter * ++nested call s:Start()
