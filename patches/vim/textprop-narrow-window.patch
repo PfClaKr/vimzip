@@ -1,0 +1,17 @@
+diff --git a/src/charset.c b/src/charset.c
+index 0fb4ede..efaa279 100644
+--- a/src/charset.c
++++ b/src/charset.c
+@@ -1411,8 +1411,11 @@ win_lbr_chartabsize(
+ 		    {
+ 			int n_extra = (int)STRLEN(p);
+ 
++			// (a window only as wide as its number column has no
++			// room for text: avoid dividing by zero)
+ 			cells = text_prop_position(wp, tp, vcol,
+-			     (vcol + size) % (wp->w_width - col_off) + col_off,
++			     wp->w_width - col_off <= 0 ? col_off
++			     : (vcol + size) % (wp->w_width - col_off) + col_off,
+ 					      &n_extra, &p, NULL, NULL, FALSE);
+ #  ifdef FEAT_LINEBREAK
+ 			if (text_prop_no_showbreak(tp))
