@@ -4,9 +4,24 @@ set nocompatible
 let &packpath = $VIMZIP . ',' . $VIMRUNTIME
 let &runtimepath = $VIMZIP . ',' . $VIMRUNTIME . ',' . $VIMRUNTIME . '/after'
 let s:cache = expand('~/.cache/vimzip')
-for s:d in ['undo', 'sessions', 'tags', 'systags', 'words']
+for s:d in ['undo', 'sessions', 'tags', 'systags', 'words', 'backup']
   silent! call mkdir(s:cache . '/' . s:d, 'p')
 endfor
+" a cache file named after a path ('/' as '%'), or after a hash of it when that name would be too
+" long for a file name (255 bytes, reached sooner with Korean; room left for a '.tmp')
+function! s:CacheName(path, ext) abort
+  let name = substitute(a:path, '[/\\:]', '%', 'g') . a:ext
+  return strlen(name) <= 240 ? name : sha256(a:path) . a:ext
+endfunction
+" the folder a session file is for: from its name, or (a hashed name) its cd line
+function! s:SessionDir(file) abort
+  let name = fnamemodify(a:file, ':t:r')
+  if name =~# '%'
+    return substitute(name, '%', '/', 'g')
+  endif
+  let cd = matchstr(join(filter(readfile(a:file, '', 40), 'v:val =~# "^cd "')[: 0]), '^cd \zs.*')
+  return substitute(cd, '\\\(.\)', '\1', 'g')
+endfunction
 
 " built-in packages
 let g:loaded_netrw = 1
@@ -61,10 +76,36 @@ set backspace=indent,eol,start wildmenu wildoptions=pum display=lastline
 set ttimeout ttimeoutlen=50 updatetime=300
 set completeopt=menuone,popup noautocomplete
 set undofile
+" vim names an undo file after the whole path: for one longer than a file name may be, every save
+" failed to write it (E828) and the history was lost. Those keep it under a hash of the path.
+function! s:LongUndo(event) abort
+  let f = expand('<afile>:p')
+  if &buftype !=# '' || f ==# '' || strlen(f) <= 250
+    return
+  endif
+  setlocal noundofile
+  let u = s:cache . '/undo/' . sha256(f)
+  if a:event ==# 'read' && filereadable(u)
+    silent! execute 'rundo' fnameescape(u)
+  elseif a:event ==# 'write'
+    silent! execute 'wundo!' fnameescape(u)
+  endif
+endfunction
+augroup vimzip_undo
+  autocmd!
+  autocmd BufReadPost * call s:LongUndo('read')
+  autocmd BufWritePre * call s:LongUndo('before')
+  autocmd BufWritePost * call s:LongUndo('write')
+augroup END
 let &undodir = s:cache . '/undo'
 " no swap files: changes are saved within a second anyway, and a swap file only gets in the way
 " (the E325 prompt) when a project is open in two vims
 set noswapfile
+" a save writes the file in place, its safety copy in the cache: the project folder itself does not
+" change, so the tree is not reread and its git colors not recomputed after every save (1 s each
+" with 10000 changed files), and file watchers see one change, not a new file
+set backupcopy=yes
+let &backupdir = s:cache . '/backup//'
 
 " autosave on leaving insert mode, after normal-mode changes, and on focus/buffer change
 " saving a new file creates its folders, like VSCode
@@ -81,7 +122,9 @@ function! s:AutoSave() abort
     try
       silent update
     catch
-      echohl ErrorMsg | echomsg 'Not saved: ' . substitute(v:exception, '^Vim(\a\+):', '', '') | echohl None
+      echohl ErrorMsg
+      echomsg (&modified ? 'Not saved: ' : 'Saved, but: ') . substitute(v:exception, '^Vim(\a\+):', '', '')
+      echohl None
     endtry
   endif
 endfunction
@@ -245,7 +288,7 @@ function! s:SysTags() abort
   let out = system(cc . ' -M -MG -w ' . flags . ' ' . join(map(dirs, '"-I" . shellescape(v:val)')) . ' ' . shellescape(src))
   let hdrs = filter(split(out), 'v:val =~# "^/" && v:val !=# src')
   if empty(hdrs) | return 0 | endif
-  let f = s:cache . '/systags/' . substitute(src, '[/\\:]', '%', 'g') . '.tags'
+  let f = s:cache . '/systags/' . s:CacheName(src, '.tags')
   call system('ctags --languages=C,C++ --langmap=C:+.h --kinds-C=+px --kinds-C++=+px -L - -f '
         \ . shellescape(f), join(hdrs, "\n"))
   if v:shell_error | return 0 | endif
@@ -415,6 +458,13 @@ command! -nargs=* -complete=customlist,VimzipLspComplete Lsp
 let g:gutentags_cache_dir = s:cache . '/tags'
 " index only source files (huge projects also skip test dirs): LLVM 474 MB -> 140 MB of tags
 let g:gutentags_file_list_command = 'vimzip-files'
+" gutentags hands a saved file's path to a shell script inside quotes: a ' in the name broke the
+" script (the project's tags stopped updating) and a $ named another file. Those files wait for the
+" next full index (which reads the file list from a file).
+function! VimzipTagsFor(path) abort
+  return a:path !~# '[''"$`\\]'
+endfunction
+let g:gutentags_init_user_func = 'VimzipTagsFor'
 
 " gitgutter: its first git calls block while vim starts, so turn it on after the first screen
 let g:gitgutter_enabled = 0
@@ -760,6 +810,89 @@ let g:NERDTreeShowHidden = 1
 let g:NERDTreeMinimalUI = 1
 let g:NERDTreeIgnore = ['^\.git$']
 let g:NERDTreeWinSize = 30
+" the tree's git colors: not recomputed whenever the cursor rests (a git status of the whole project
+" every 0.3 s, 0.5 s of vim each time with 10000 changed files); after a save, and when the folders
+" or git's index or HEAD change (a commit in the terminal, see s:TreeSyncHere)
+let g:NERDTreeGitStatusUpdateOnCursorHold = 0
+" and its parsing of `git status`, three function calls a line (0.5 s for 10000 changed files),
+" done again in one loop once its file is loaded: the same result, several times faster
+let s:git_keys = {'DD': 'Unmerged', 'AU': 'Unmerged', 'UD': 'Unmerged', 'UA': 'Unmerged',
+      \ 'DU': 'Unmerged', 'AA': 'Unmerged', 'UU': 'Unmerged', '??': 'Untracked', '!!': 'Ignored'}
+function! s:GitKey(x, y) abort
+  let xy = a:x . a:y
+  if !has_key(s:git_keys, xy)
+    let s:git_keys[xy] = a:y ==# 'M' ? 'Modified' : a:y ==# 'D' ? 'Deleted' : a:y =~# '[RC]' ? 'Renamed'
+          \ : a:x ==# 'D' ? 'Deleted' : a:x =~# '[MA]' ? 'Staged' : a:x =~# '[RC]' ? 'Renamed' : 'Unknown'
+  endif
+  return s:git_keys[xy]
+endfunction
+" (a compiled :def function: the same loop in legacy script took 0.3 s for 10000 lines)
+def VimzipGitStatusLines(root: string, lines: list<string>, opts: dict<any>): dict<string>
+  var result: dict<string> = {}
+  # (the plugin passes g:, where these can be strings such as '2')
+  var v2 = str2nr(get(opts, 'NERDTreeGitStatusPorcelainVersion', 2) .. '') == 2
+  var dirty_only = str2nr(get(opts, 'NERDTreeGitStatusDirDirtyOnly', 1) .. '') != 0
+  var is_rename = false
+  var key = ''
+  var path = ''
+  for line in lines
+    if is_rename
+      [path, key, is_rename] = [root .. '/' .. line, 'Dirty', false]
+    else
+      # the fields before the path are ASCII, so character and byte offsets agree there
+      if !v2
+        [key, path] = [s:GitKey(line[0], line[1]), strpart(line, 3)]
+      elseif line[0] == '1'
+        [key, path] = [s:GitKey(line[2], line[3]), strpart(line, 113)]
+      elseif line[0] == '2'
+        path = strpart(line, 113)
+        [key, path] = ['Renamed', strpart(path, stridx(path, ' ') + 1)]
+      elseif line[0] == 'u'
+        [key, path] = ['Unmerged', strpart(line, 161)]
+      elseif line[0] == '?'
+        [key, path] = ['Untracked', strpart(line, 2)]
+      elseif line[0] == '!'
+        [key, path] = ['Ignored', strpart(line, 2)]
+      else
+        throw '[nerdtree_git_status] unknown status: ' .. line
+      endif
+      path = root .. '/' .. path
+      if path =~ '/$'
+        path = strpart(path, 0, strlen(path) - 1)
+      endif
+      is_rename = key == 'Renamed'
+      result[path] = key
+    endif
+    # the folders above it: Dirty, or (dirty_only off) their files' state while they agree
+    if get(result, path, '') == 'Ignored'
+      continue
+    endif
+    var dir = strpart(path, 0, strridx(path, '/'))
+    while dir != root && strlen(dir) > strlen(root)
+      var have = get(result, dir, '')
+      if have == ''
+        result[dir] = dirty_only ? 'Dirty' : key
+      elseif dirty_only || have == 'Dirty' || have == key
+        break
+      else
+        result[dir] = 'Dirty'
+      endif
+      dir = strpart(dir, 0, strridx(dir, '/'))
+    endwhile
+  endfor
+  return result
+enddef
+function! s:FastGitStatus() abort
+  function! gitstatus#util#ParseGitStatusLines(root, statusLines, opts) abort
+    return VimzipGitStatusLines(a:root, a:statusLines, a:opts)
+  endfunction
+endfunction
+augroup vimzip_gitstatus
+  autocmd!
+  " (its file is usually loaded while this vimrc runs, before these lines)
+  autocmd VimEnter * if exists('*gitstatus#util#ParseGitStatusLines') | call s:FastGitStatus() | endif
+  autocmd SourcePost */autoload/gitstatus/util.vim call s:FastGitStatus()
+augroup END
 let g:NERDTreeStatusline = -1
 let g:tagbar_no_status_line = 1
 let g:tagbar_compact = 2
@@ -1412,6 +1545,7 @@ nnoremap <silent> <C-w>= :call <SID>Equalize()<CR>
 " files created or removed outside vim (in the terminal, by git or a build) show up in the tree by
 " themselves: the open folders whose modification time changed are read again
 let s:tree_mtime = {}
+let s:tree_gitdir = {}
 function! s:TreeSync(...) abort
   if exists('g:NERDTree') && g:NERDTree.IsOpen() && mode() ==# 'n'
     " NERDTree's own functions only work from inside its window
@@ -1435,8 +1569,22 @@ function! s:TreeSyncHere() abort
     let s:tree_mtime[dir] = t
     call extend(todo, filter(copy(node.children), 'v:val.path.isDirectory && v:val.isOpen'))
   endwhile
+  " git's own state: a commit, an add or a checkout done in a terminal
+  let gitdir = get(s:tree_gitdir, getcwd(), '')
+  if gitdir ==# '' && exists('*FugitiveExtractGitDir')
+    let gitdir = FugitiveExtractGitDir(getcwd())
+    let s:tree_gitdir[getcwd()] = gitdir
+  endif
+  let git = gitdir ==# '' ? [] : [getftime(gitdir . '/index'), getftime(gitdir . '/HEAD')]
+  let git_changed = get(s:, 'tree_git', git) != git
+  let s:tree_git = git
   if changed
     call b:NERDTree.render()
+  endif
+  " (and every 30 s at most otherwise: the plugin drops a result that arrives while the tree is
+  " being reopened, which the next look then puts right)
+  if changed || git_changed || localtime() - get(s:, 'tree_git_at', 0) >= 30
+    let s:tree_git_at = localtime()
     silent! doautocmd <nomodeline> User FugitiveChanged
   endif
 endfunction
@@ -1490,7 +1638,7 @@ function! s:Words() abort
   endif
   if !executable('rg') | return | endif
   let s:words_at = localtime()
-  let f = s:cache . '/words/' . substitute(getcwd(), '[/\\:]', '%', 'g') . '.txt'
+  let f = s:cache . '/words/' . s:CacheName(getcwd(), '.txt')
   if filereadable(f)
     call s:UseWords(f)
   endif
@@ -1540,7 +1688,7 @@ endfunction
 " ─── sessions and projects ───────────────────────────────────────────────────────────────────────
 " per-folder session, used when started as `vim <dir>`
 function! s:SessionFile() abort
-  return s:cache . '/sessions/' . substitute(getcwd(), '[/\\:]', '%', 'g') . '.vim'
+  return s:cache . '/sessions/' . s:CacheName(getcwd(), '.vim')
 endfunction
 set sessionoptions=buffers,curdir,folds,tabpages,winsize
 
@@ -1621,7 +1769,7 @@ endfunction
 function! s:RecentProjects() abort
   let files = glob(s:cache . '/sessions/*.vim', 0, 1)
   call sort(files, {a, b -> getftime(b) - getftime(a)})
-  let dirs = map(files, {_, f -> substitute(fnamemodify(f, ':t:r'), '%', '/', 'g')})
+  let dirs = map(files, {_, f -> s:SessionDir(f)})
   return map(filter(dirs, {_, d -> isdirectory(d) && d !=# getcwd()}), {_, d -> fnamemodify(d, ':~')})
 endfunction
 function! s:PickProject() abort
@@ -1727,10 +1875,12 @@ function! s:Prune(...) abort
   call writefile([], stamp)
   let day = 86400
   let Path = {f -> substitute(fnamemodify(f, ':t:r'), '%', '/', 'g')}
-  let rules = [['undo/*', 365, {f -> filereadable(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}],
-        \      ['sessions/*.vim', 365, {f -> isdirectory(Path(f))}],
-        \      ['words/*.txt', 90, {f -> isdirectory(Path(f))}],
-        \      ['systags/*.tags', 90, {f -> filereadable(Path(f))}],
+  " (a hashed name, see s:CacheName, cannot be traced back to its file: it only ages)
+  let Hashed = {f -> fnamemodify(f, ':t') !~# '%'}
+  let rules = [['undo/*', 365, {f -> Hashed(f) || filereadable(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}],
+        \      ['sessions/*.vim', 365, {f -> isdirectory(s:SessionDir(f))}],
+        \      ['words/*.txt', 90, {f -> Hashed(f) || isdirectory(Path(f))}],
+        \      ['systags/*.tags', 90, {f -> Hashed(f) || filereadable(Path(f))}],
         \      ['tags/*-tags', 90, {f -> 1}],
         \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}]]
   for [pat, days, Exists] in rules
@@ -2085,10 +2235,24 @@ nnoremap <silent> <leader>cl :Lsp<CR>
 nnoremap <silent> <leader>cf gg=G``
 
 " git: Space g; ]c / [c move between changes (vim's keys for that in a diff)
-nnoremap <silent> <leader>gs :call <SID>EditWin()<Bar>Git<CR>
-nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>CommitPopup()<CR>
+" outside a git repository: one line saying so (Space gd stopped at a press-ENTER error)
+function! s:InGit() abort
+  if empty(FugitiveGitDir())
+    echohl WarningMsg | echo 'Not in a git repository' | echohl None
+    return 0
+  endif
+  return 1
+endfunction
+" (a command run from here: :Git in a mapping's if ... endif took the endif as its own)
+function! s:GitRun(cmd) abort
+  if s:InGit()
+    execute a:cmd
+  endif
+endfunction
+nnoremap <silent> <leader>gs :call <SID>EditWin()<Bar>call <SID>GitRun('Git')<CR>
+nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>CommitPopup()')<CR>
 nnoremap <silent> <leader>gb :call <SID>EditWin()<Bar>let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
-nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>Git blame<CR>
+nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>call <SID>GitRun('Git blame')<CR>
 nnoremap <silent> <leader>gh :call <SID>EditWin()<Bar>GV!<CR>
 xnoremap <silent> <leader>gh :GV<CR>
 nnoremap <silent> <leader>gl :call <SID>EditWin()<Bar>GV<CR>
@@ -2106,7 +2270,7 @@ function! s:DiffSplit(mods, rev) abort
     echohl WarningMsg | echo 'No room to compare: close a panel or split' | echohl None
   endtry
 endfunction
-nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>DiffSplit('', '')<CR>
+nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>DiffSplit("", "")')<CR>
 nmap <silent> <leader>gp :call <SID>EditWin()<CR><Plug>(GitGutterPreviewHunk)
 nmap <silent> <leader>ga :call <SID>EditWin()<CR><Plug>(GitGutterStageHunk)
 nmap <silent> <leader>gu :call <SID>EditWin()<CR><Plug>(GitGutterUndoHunk)
@@ -2193,8 +2357,8 @@ endif
 
 " ─── light mode ─────────────────────────────────────────────────────────────────────────────────
 " On a small machine (s:res, under 2 CPUs or 1 GB free) do less in the background: line blame
-" starts off (Space gb), files are checked when saved rather than also when opened, the tree's
-" git colors and the change marks refresh less often, the completion word list is built when
+" starts off (Space gb), files are checked when saved rather than also when opened, the change
+" marks refresh less often, the completion word list is built when
 " first used, clangd runs without its background index, and under 1 GB free language servers
 " start off (:Lsp turns one on).
 " :VimzipInfo shows what was found and chosen.
@@ -2210,7 +2374,6 @@ function! s:Light() abort
     let g:vimzip_blame = 0
   endif
   let g:ale_lint_on_enter = 0
-  let g:NERDTreeGitStatusUpdateOnCursorHold = 0
   let g:ale_c_clangd_options = '--background-index=false -j=1'
   let g:ale_cpp_clangd_options = g:ale_c_clangd_options
 endfunction
