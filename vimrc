@@ -832,6 +832,9 @@ let g:NERDTreeShowHidden = 1
 let g:NERDTreeMinimalUI = 1
 let g:NERDTreeIgnore = ['^\.git$']
 let g:NERDTreeWinSize = 30
+" a file renamed, moved or deleted in the tree (m) takes its open tab along, like VSCode, with no
+" (yN) question whose key could be lost to a background event, leaving a tab on a file that is gone
+let g:NERDTreeAutoDeleteBuffer = 1
 " the tree's git colors: not recomputed whenever the cursor rests (a git status of the whole project
 " every 0.3 s, 0.5 s of vim each time with 10000 changed files); after a save, and when the folders
 " or git's index or HEAD change (a commit in the terminal, see s:TreeSyncHere)
