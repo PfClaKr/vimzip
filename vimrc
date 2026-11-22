@@ -742,7 +742,7 @@ function! s:QuitIfOnlyPanels() abort
   for w in range(1, winnr('$'))
     let b = winbufnr(w)
     if index(['nerdtree', 'tagbar', 'vimziptimeline'], getbufvar(b, '&filetype')) < 0
-          \ && getbufvar(b, '&buftype') !=# 'terminal' && b != s:tl.buf
+          \ && index(['terminal', 'quickfix'], getbufvar(b, '&buftype')) < 0 && b != s:tl.buf
       return
     endif
   endfor
@@ -1945,6 +1945,8 @@ augroup vimzip
         \ | endfor
   " git's versions of a file (diffs, blame, history) stay out of the tabs
   autocmd BufReadPost fugitive://* setlocal nobuflisted
+  " and so do the quickfix and location lists (Tab and Space q would show them in the editor)
+  autocmd FileType qf setlocal nobuflisted
   " the timeline lives under the tree: it goes away and comes back with it
   autocmd BufWinLeave NERD_tree_* call timer_start(0, {-> s:TreeGone()})
   autocmd BufWinEnter NERD_tree_* call timer_start(0, {-> s:TreeBack()})
