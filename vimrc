@@ -2235,10 +2235,24 @@ nnoremap <silent> <leader>cl :Lsp<CR>
 nnoremap <silent> <leader>cf gg=G``
 
 " git: Space g; ]c / [c move between changes (vim's keys for that in a diff)
-nnoremap <silent> <leader>gs :call <SID>EditWin()<Bar>Git<CR>
-nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>CommitPopup()<CR>
+" outside a git repository: one line saying so (Space gd stopped at a press-ENTER error)
+function! s:InGit() abort
+  if empty(FugitiveGitDir())
+    echohl WarningMsg | echo 'Not in a git repository' | echohl None
+    return 0
+  endif
+  return 1
+endfunction
+" (a command run from here: :Git in a mapping's if ... endif took the endif as its own)
+function! s:GitRun(cmd) abort
+  if s:InGit()
+    execute a:cmd
+  endif
+endfunction
+nnoremap <silent> <leader>gs :call <SID>EditWin()<Bar>call <SID>GitRun('Git')<CR>
+nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>CommitPopup()')<CR>
 nnoremap <silent> <leader>gb :call <SID>EditWin()<Bar>let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
-nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>Git blame<CR>
+nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>call <SID>GitRun('Git blame')<CR>
 nnoremap <silent> <leader>gh :call <SID>EditWin()<Bar>GV!<CR>
 xnoremap <silent> <leader>gh :GV<CR>
 nnoremap <silent> <leader>gl :call <SID>EditWin()<Bar>GV<CR>
@@ -2256,7 +2270,7 @@ function! s:DiffSplit(mods, rev) abort
     echohl WarningMsg | echo 'No room to compare: close a panel or split' | echohl None
   endtry
 endfunction
-nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>DiffSplit('', '')<CR>
+nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>DiffSplit("", "")')<CR>
 nmap <silent> <leader>gp :call <SID>EditWin()<CR><Plug>(GitGutterPreviewHunk)
 nmap <silent> <leader>ga :call <SID>EditWin()<CR><Plug>(GitGutterStageHunk)
 nmap <silent> <leader>gu :call <SID>EditWin()<CR><Plug>(GitGutterUndoHunk)
