@@ -42,6 +42,13 @@ augroup vimzip_long
   autocmd BufWinEnter * call s:LongLines()
 augroup END
 set fillchars+=vert:│
+" windows side by side: scrolling one line redrew the whole window (5x the output, a lagging
+" terminal while a key is held). The vim script asks whether the terminal has left/right margins.
+if $VIMZIP_DECSLRM ==# '1'
+  let &t_CV = "\e[%i%p1%d;%p2%ds"
+  let &t_ti .= "\e[?69h"
+  let &t_te = "\e[?69l" . &t_te
+endif
 " no window narrower than its line-number gutter: vim divides by zero (crashes) laying out a
 " window exactly that wide
 set winminwidth=12
@@ -1546,10 +1553,23 @@ function! s:Ruler() abort
     let s:ruler_info[s:rulers[-1]] = {'win': w, 'h': h, 'n': n, 'target': target}
   endfor
 endfunction
+" hidden while the text scrolls: with any popup on the screen vim redraws a scrolled window line by
+" line instead of scrolling it (3x the output with a key held down, a terminal falling behind).
+" Only where it can scroll: the full screen width, or with the terminal's margins (see t_CV).
+function! s:RulerScroll() abort
+  if empty(s:rulers) || !get(get(v:event, 'all', {}), 'topline', 0)
+        \ || (&t_CV ==# '' && winwidth(0) < &columns)
+    return
+  endif
+  call map(copy(s:rulers), 'popup_hide(v:val)')
+  call timer_stop(get(s:, 'ruler_show', -1))
+  let s:ruler_show = timer_start(300, {-> map(copy(s:rulers), 'popup_show(v:val)')})
+endfunction
 augroup vimzip_ruler
   autocmd!
   autocmd User GitGutter call s:RulerLater()
   autocmd WinResized,VimResized,WinClosed,TabEnter,BufWinEnter * call s:RulerLater()
+  autocmd WinScrolled * call s:RulerScroll()
 augroup END
 
 " cache cleanup, at most once a day: regenerable caches (tags, words) go after 90 unused days,
