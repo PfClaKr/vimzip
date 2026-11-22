@@ -628,7 +628,9 @@ function! s:TimelineUpdate() abort
     return
   endif
   let [dir, name, out] = [shellescape(fnamemodify(f, ':h')), shellescape(fnamemodify(f, ':t')), []]
-  let cmd = 'cd ' . dir . ' && git status --porcelain -- ' . name . '; echo @@; git -c core.quotepath=false log --follow -n 300 --name-only'
+  " (no optional locks: a status refreshing the index right after a save made a git commit typed in
+  " the terminal at that moment fail with index.lock)
+  let cmd = 'cd ' . dir . ' && GIT_OPTIONAL_LOCKS=0 git status --porcelain -- ' . name . '; echo @@; git -c core.quotepath=false log --follow -n 300 --name-only'
         \ . ' --format=%x01%h%x09%at%x09%an%x09%s -- ' . name
   call job_start(['sh', '-c', cmd], {'err_io': 'null', 'out_cb': {_, l -> add(out, l)},
         \ 'close_cb': {_ -> s:TimelineRender(f, out)}})
@@ -815,6 +817,9 @@ let g:NERDTreeWinSize = 30
 " every 0.3 s, 0.5 s of vim each time with 10000 changed files); after a save, and when the folders
 " or git's index or HEAD change (a commit in the terminal, see s:TreeSyncHere)
 let g:NERDTreeGitStatusUpdateOnCursorHold = 0
+" a failed background status (any line on git's stderr) is not an error message in the middle of
+" typing: the colors are redone at the next save, or within 30 s
+let g:NERDTreeGitStatusLogLevel = 4
 " and its parsing of `git status`, three function calls a line (0.5 s for 10000 changed files),
 " done again in one loop once its file is loaded: the same result, several times faster
 let s:git_keys = {'DD': 'Unmerged', 'AU': 'Unmerged', 'UD': 'Unmerged', 'UA': 'Unmerged',
