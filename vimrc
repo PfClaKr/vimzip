@@ -64,9 +64,6 @@ if get(g:, 'vimzip_decslrm', 0)
   let &t_ti .= "\e[?69h"
   let &t_te = "\e[?69l" . &t_te
 endif
-" no window narrower than its line-number gutter: vim divides by zero (crashes) laying out a
-" window exactly that wide
-set winminwidth=12
 " opening or closing a window leaves the others as they are (vim would make them all equal)
 set noequalalways
 set incsearch hlsearch ignorecase smartcase
@@ -1051,7 +1048,8 @@ augroup vimzip_status
   autocmd!
   autocmd CursorMoved,CursorMovedI,ModeChanged,WinEnter,BufEnter,TextChanged,TextChangedI * call s:BarRefresh()
   autocmd WinResized,VimResized * call s:BarRefresh()
-  autocmd VimResized * call s:Layout()
+  " ++nested: the tree stepping aside (or back) takes the timeline under it along
+  autocmd VimResized * ++nested call s:Layout()
   autocmd WinResized * call s:Resized()
 augroup END
 let s:modes = {'n': ['NORMAL', 'Normal'], 'i': ['INSERT', 'Insert'], 'R': ['REPLACE', 'Replace'],
@@ -1527,8 +1525,8 @@ function! s:Layout(...) abort
   endif
   call win_gotoid(here)
 endfunction
-" a new side panel is opened only after the others made room for it: a window squeezed to its
-" line-number width makes vim divide by zero (crash) when it lays out long lines
+" a new side panel is opened only after the others made room for it, so the editor is not squeezed
+" to a sliver first
 function! s:Outline() abort
   if index(map(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&filetype")'), 'tagbar') < 0
     call s:Layout('tagbar')
@@ -2329,6 +2327,7 @@ function! s:Debug() abort
   if exists(':RunOrContinue') == 2
     RunOrContinue
   else
+    call s:EditWin()  " (termdebug splits the current window: not the tree's)
     call feedkeys(':TermdebugCommand ', 'n')
   endif
 endfunction
@@ -2355,6 +2354,16 @@ function! s:DebugStarted() abort
     endfor
   endfor
   call sign_unplace('vimzip_break')
+  " termdebug splits the editor in half for gdb and the program, which next to the tree leaves the
+  " source a narrow strip of wrapped lines: the source gets the larger part
+  let tree = filter(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&filetype") ==# "nerdtree"')
+  let room = &columns - (empty(tree) ? 0 : winwidth(tree[0]) + 1)
+  for name in ['gdb', 'debugged-program']
+    let w = bufwinid(bufnr('^' . name . '$'))
+    if w > 0
+      call win_execute(w, 'vertical resize ' . max([40, min([90, room * 2 / 5])]))
+    endif
+  endfor
   Run
   Source
 endfunction

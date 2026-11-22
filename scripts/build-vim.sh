@@ -2,6 +2,7 @@
 # Build a static vim (musl + ncurses) into $1 (bin/, runtime/).
 set -eu
 cd "$(dirname "$0")/.."
+R=$(pwd)
 . ./versions.env
 OUT=$(mkdir -p "$1" && cd "$1" && pwd)
 CC=${CC:-cc}
@@ -45,6 +46,18 @@ if [ -z "${ICONV_PREFIX:-}" ]; then
 fi
 
 cd "$W/vim"
+# fixes vim does not have (yet): patches/vim. One vim has taken is skipped; one that no longer
+# applies stops the build, so a newer vim cannot drop it unnoticed.
+for p in "$R"/patches/vim/*.patch; do
+  if git apply --check "$p" 2>/dev/null; then
+    git apply "$p"
+  elif git apply -R --check "$p" 2>/dev/null; then
+    echo "vim $VIM_VERSION already has ${p##*/}"
+  else
+    echo "patches/vim/${p##*/} does not apply to vim $VIM_VERSION" >&2
+    exit 1
+  fi
+done
 PKG_CONFIG=false ./configure -q CC="$CC" --prefix=/usr \
   CPPFLAGS="-I$ICONV_PREFIX/include -I$W/nc/include -I$W/nc/include/ncursesw" \
   LDFLAGS="-static -L$ICONV_PREFIX/lib -L$W/nc/lib" \

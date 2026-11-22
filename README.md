@@ -96,4 +96,4 @@ CC=musl-gcc ./build.sh    # elsewhere (needs musl-tools)
 ```
 
 Versions are pinned in `versions.env`. A weekly workflow opens a pull request with newer ones, and
-every push to main publishes a release.
+every push to main publishes a release. `patches/vim` holds crash fixes vim does not have yet.

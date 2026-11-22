@@ -1,0 +1,21 @@
+diff --git a/src/screen.c b/src/screen.c
+index 95c16fc..70e3610 100644
+--- a/src/screen.c
++++ b/src/screen.c
+@@ -1710,12 +1710,14 @@ win_redr_custom(
+ 	for (n = 0; tabtab[n].start != NULL; n++)
+ 	{
+ 	    len += vim_strnsize(p, (int)(tabtab[n].start - p));
+-	    while (col < len)
++	    while (col < len && col < Columns)
+ 		TabPageIdxs[col++] = fillchar;
+ 	    p = tabtab[n].start;
+ 	    fillchar = tabtab[n].userhl;
+ 	}
+-	while (col < firstwin->w_wincol + topframe->fr_width)
++	// (the windows can be wider than the screen when it is too narrow for
++	// them: TabPageIdxs[] has Columns entries)
++	while (col < firstwin->w_wincol + topframe->fr_width && col < Columns)
+ 	    TabPageIdxs[col++] = fillchar;
+     }
+ 

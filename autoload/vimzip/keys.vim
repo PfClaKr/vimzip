@@ -310,21 +310,67 @@ function! s:Chips(keys) abort
   return [text, props]
 endfunction
 
+" text broken at spaces into lines of at most w cells (a longer word is cut)
+function! s:Wrap(text, w) abort
+  let [lines, line] = [[], '']
+  for word in split(a:text, ' ')
+    while strwidth(word) > a:w
+      if line !=# ''
+        call add(lines, line)
+        let line = ''
+      endif
+      let n = a:w
+      while strwidth(strcharpart(word, 0, n)) > a:w
+        let n -= 1
+      endwhile
+      call add(lines, strcharpart(word, 0, n))
+      let word = strcharpart(word, n)
+    endwhile
+    if line ==# ''
+      let line = word
+    elseif strwidth(line . ' ' . word) <= a:w
+      let line .= ' ' . word
+    else
+      call add(lines, line)
+      let line = word
+    endif
+  endfor
+  return line ==# '' && !empty(lines) ? lines : lines + [line]
+endfunction
+
 " one topic as rows [text, [[byte col (0-based), byte length, highlight], ...]] in a column of
-" width w, keys in the first keyw cells
+" width w, keys in the first keyw cells. Every row fits, with a cell to spare (a row as wide as the
+" popup makes vim widen it past the screen edge): a description too long for its place goes on
+" under itself, and on a narrow screen under the keys (the popup's own wrapping would cut words and
+" make the last rows unreachable by scrolling)
 function! s:Block(topic, rows, w, keyw) abort
-  let rule = repeat('─', max([2, a:w - strdisplaywidth(a:topic) - 2]))
-  let out = [[a:topic . ' ' . rule, [[0, strlen(a:topic), 'Topic'], [strlen(a:topic) + 1, strlen(rule), 'Rule']]]]
+  let names = s:Wrap(a:topic, a:w - 3)
+  let out = map(names[: -2], '[v:val, [[0, strlen(v:val), "Topic"]]]')
+  let rule = repeat('─', max([0, a:w - strwidth(names[-1]) - 2]))
+  call add(out, [names[-1] . ' ' . rule, [[0, strlen(names[-1]), 'Topic'], [strlen(names[-1]) + 1, strlen(rule), 'Rule']]])
+  let stacked = a:w - a:keyw - 4 < 16
+  let indent = stacked ? 4 : a:keyw + 4
+  let descw = max([8, a:w - indent - 1])
   for [k, what] in a:rows
     if k ==# '>'
       call add(out, ['  ' . what . ':', [[2, strlen(what) + 1, 'Sub']]])
     elseif k ==# ''
-      let pad = repeat(' ', a:keyw + 4)
-      call add(out, [pad . '↳ ' . what, [[strlen(pad), strlen('↳ ' . what), 'Note']]])
+      let pad = repeat(' ', indent)
+      for [i, l] in items(s:Wrap(what, descw - 2))
+        let l = (i ? '  ' : '↳ ') . l
+        call add(out, [pad . l, [[strlen(pad), strlen(l), 'Note']]])
+      endfor
     else
       let [chips, props] = s:Chips(k)
-      let pad = repeat(' ', a:keyw - strdisplaywidth(chips) + 2)
-      call add(out, ['  ' . chips . pad . what, map(props, '[v:val[0] + 2, v:val[1], v:val[2]]')])
+      let props = map(props, '[v:val[0] + 2, v:val[1], v:val[2]]')
+      let lines = s:Wrap(what, descw)
+      if stacked
+        call add(out, ['  ' . chips, props])
+      else
+        let pad = repeat(' ', a:keyw - strwidth(chips) + 2)
+        call add(out, ['  ' . chips . pad . remove(lines, 0), props])
+      endif
+      call extend(out, map(lines, '[repeat(" ", indent) . v:val, []]'))
     endif
   endfor
   return out + [['', []]]
@@ -338,15 +384,18 @@ function! s:Layout(topics, width) abort
   for [_, rows] in a:topics
     for [k, what] in rows
       if k ==# ''
-        let descw = max([descw, strdisplaywidth('↳ ' . what)])
+        let descw = max([descw, strwidth('↳ ' . what)])
       elseif k !=# '>'
-        let keyw = max([keyw, strdisplaywidth(s:Chips(k)[0])])
-        let descw = max([descw, strdisplaywidth(what)])
+        let keyw = max([keyw, strwidth(s:Chips(k)[0])])
+        let descw = max([descw, strwidth(what)])
       endif
     endfor
   endfor
-  let colw = max([keyw + 4 + descw, 24])
+  let colw = max([keyw + 5 + descw, 24])  " (one cell to spare, see s:Block)
   let two = 2 * colw + 4 <= a:width
+  if !two
+    let colw = min([colw, max([20, a:width])])
+  endif
   let blocks = map(copy(a:topics), 's:Block(v:val[0], v:val[1], colw, keyw)')
   if !two || len(blocks) < 2
     return [flatten(blocks, 1), colw]
@@ -365,7 +414,7 @@ function! s:Layout(topics, width) abort
   for i in range(max([len(l), len(r)]))
     let [lt, lp] = get(l, i, ['', []])
     let [rt, rp] = get(r, i, ['', []])
-    let lt .= repeat(' ', colw + 4 - strdisplaywidth(lt))
+    let lt .= repeat(' ', colw + 4 - strwidth(lt))
     call add(rows, [lt . rt, lp + map(copy(rp), '[v:val[0] + strlen(lt), v:val[1], v:val[2]]')])
   endfor
   return [rows, 2 * colw + 4]
