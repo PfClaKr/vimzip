@@ -1754,6 +1754,10 @@ augroup vimzip
   autocmd WinClosed * call timer_start(0, {-> s:AfterClose()})
   " q closes fugitive's status and blame windows too (its own key is gq)
   autocmd FileType fugitive,fugitiveblame nmap <buffer> <silent> q gq
+  " Ctrl+w s / v from a side panel split the editor, not the panel (a second file tree)
+  autocmd FileType nerdtree,tagbar,vimziptimeline for s:k in ['s', 'S', 'v', '<C-s>', '<C-v>']
+        \ | execute 'nnoremap <buffer> <silent> <C-w>' . s:k ':call <SID>EditWin()<Bar>' . (s:k =~? 'v' ? 'vsplit' : 'split') . '<CR>'
+        \ | endfor
   " git's versions of a file (diffs, blame, history) stay out of the tabs
   autocmd BufReadPost fugitive://* setlocal nobuflisted
   " the timeline lives under the tree: it goes away and comes back with it
