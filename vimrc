@@ -2329,6 +2329,7 @@ function! s:Debug() abort
   if exists(':RunOrContinue') == 2
     RunOrContinue
   else
+    call s:EditWin()  " (termdebug splits the current window: not the tree's)
     call feedkeys(':TermdebugCommand ', 'n')
   endif
 endfunction
@@ -2355,6 +2356,16 @@ function! s:DebugStarted() abort
     endfor
   endfor
   call sign_unplace('vimzip_break')
+  " termdebug splits the editor in half for gdb and the program, which next to the tree leaves the
+  " source a narrow strip of wrapped lines: the source gets the larger part
+  let tree = filter(range(1, winnr('$')), 'getbufvar(winbufnr(v:val), "&filetype") ==# "nerdtree"')
+  let room = &columns - (empty(tree) ? 0 : winwidth(tree[0]) + 1)
+  for name in ['gdb', 'debugged-program']
+    let w = bufwinid(bufnr('^' . name . '$'))
+    if w > 0
+      call win_execute(w, 'vertical resize ' . max([40, min([90, room * 2 / 5])]))
+    endif
+  endfor
   Run
   Source
 endfunction
