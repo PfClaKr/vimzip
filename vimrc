@@ -1056,6 +1056,9 @@ function! s:BarLayout() abort
         \ toupper(fenc !=# '' ? fenc : &encoding),
         \ get({'unix': 'LF', 'dos': 'CRLF', 'mac': 'CR'}, ff, ff),
         \ ft ==# '' ? 'Plain Text' : get(s:languages, ft, toupper(ft[0]) . ft[1:])]
+  if !empty(getbufvar(b, 'vimzip_view'))
+    let items[1 : 3] = ['', '', '']  " a picture or PDF: no indent, encoding or line endings
+  endif
   " right-aligned with one space at the end; drop the least useful items first when short of room
   for drop in [0, 1, 2, 3, 4]
     if drop
@@ -1807,6 +1810,11 @@ augroup END
 let s:view = $VIMZIP . '/bin/vimzip-view'
 let s:img_hl = {}  " highlight group: its definition, again after a :colorscheme
 function! s:ViewOpen(buf, kind) abort
+  if bufname(a:buf) =~# '^fugitive://'
+    " a version from git (timeline, Space gd): after fugitive has read it, from a copy of it
+    call timer_start(0, {-> bufexists(a:buf) ? s:ViewGit(a:buf, a:kind) : 0})
+    return
+  endif
   let b:vimzip_view = a:kind
   setlocal buftype= noswapfile noundofile undolevels=-1 bufhidden= nomodeline
   let &l:filetype = 'vimzip' . a:kind
@@ -1820,6 +1828,26 @@ function! s:ViewOpen(buf, kind) abort
     call s:ImgRender(a:buf)
   endif
 endfunction
+function! s:ViewGit(buf, kind) abort
+  let [rev, dir] = FugitiveParse(bufname(a:buf))
+  let tmp = tempname() . '.' . fnamemodify(bufname(a:buf), ':e')
+  call system('git --git-dir=' . shellescape(dir) . ' cat-file blob ' . shellescape(rev) . ' > ' . shellescape(tmp))
+  call setbufvar(a:buf, 'vimzip_view', a:kind)
+  call setbufvar(a:buf, 'vimzip_src', v:shell_error ? '' : tmp)
+  call setbufvar(a:buf, 'vimzip_rev', rev =~# '^:' ? 'staged' : 'at ' . rev[: 6])
+  call setbufvar(a:buf, '&filetype', 'vimzip' . a:kind)
+  call win_execute(bufwinid(a:buf), 'setlocal ' . s:view_opts)
+  call s:ViewFill(a:buf, ['', '  Loading ...'])
+  if a:kind ==# 'pdf'
+    call s:PdfRead(a:buf)
+  else
+    call s:ImgRender(a:buf)
+  endif
+endfunction
+" the file to draw: the buffer's, or the copy taken from git
+function! s:ViewFile(buf) abort
+  return getbufvar(a:buf, 'vimzip_src', fnamemodify(bufname(a:buf), ':p'))
+endfunction
 function! s:ViewFill(buf, lines) abort
   call setbufvar(a:buf, '&modifiable', 1)
   silent call deletebufline(a:buf, 1, '$')
@@ -1828,9 +1856,9 @@ function! s:ViewFill(buf, lines) abort
   call setbufvar(a:buf, '&modified', 0)
 endfunction
 function! s:ViewHeader(buf, info) abort
-  let f = fnamemodify(bufname(a:buf), ':p')
-  let kb = getfsize(f) / 1024
-  return printf('  %s   %s   %s   o: open in viewer', fnamemodify(f, ':t'), a:info,
+  let kb = getfsize(s:ViewFile(a:buf)) / 1024
+  let name = fnamemodify(bufname(a:buf), ':t') . (getbufvar(a:buf, 'vimzip_rev') !=# '' ? ' (' . getbufvar(a:buf, 'vimzip_rev') . ')' : '')
+  return printf('  %s   %s   %s   o: open in viewer', name, a:info,
         \ kb >= 1024 ? printf('%.1f MB', kb / 1024.0) : max([kb, 1]) . ' KB')
 endfunction
 " the window's size in cells for the picture, under the header line and a blank one
@@ -1849,7 +1877,7 @@ function! s:ImgRender(buf) abort
     return
   endif
   let out = []
-  let cmd = [s:view, 'image', fnamemodify(bufname(a:buf), ':p'), size[0], size[1]] + (&termguicolors ? [] : ['256'])
+  let cmd = [s:view, 'image', s:ViewFile(a:buf), size[0], size[1]] + (&termguicolors ? [] : ['256'])
   call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(out, 'error: ' . l)},
         \ 'close_cb': {_ -> s:ImgShow(a:buf, out, size)}})
 endfunction
@@ -1888,7 +1916,7 @@ function! s:ImgShow(buf, out, size) abort
   endfor
 endfunction
 function! s:PdfRead(buf) abort
-  let file = fnamemodify(bufname(a:buf), ':p')
+  let file = s:ViewFile(a:buf)
   let cmd = executable('pdftotext') ? ['pdftotext', '-layout', '-enc', 'UTF-8', file, '-'] : [s:view, 'pdf', file]
   let [out, err] = [[], []]
   call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(err, l)},
@@ -1921,7 +1949,7 @@ function! s:PdfShow(buf, out, err, tool) abort
   call s:ViewFill(a:buf, lines)
 endfunction
 function! s:ViewExternal() abort
-  let f = expand('%:p')
+  let f = s:ViewFile(bufnr(''))
   if executable('wslpath') && executable('explorer.exe') && !executable('wslview')
     let cmd = ['explorer.exe', trim(system('wslpath -w ' . shellescape(f)))]
   else
@@ -1937,9 +1965,10 @@ function! s:ViewExternal() abort
   echo 'Opened in the system viewer: ' . expand('%:t')
 endfunction
 " no line numbers or cursor line over a picture; redrawn to fit after a resize
+let s:view_opts = 'nonumber norelativenumber nocursorline nolist nowrap signcolumn=no colorcolumn= foldcolumn=0'
 function! s:ViewWindow() abort
   if exists('b:vimzip_view')
-    setlocal nonumber norelativenumber nocursorline nolist nowrap signcolumn=no colorcolumn= foldcolumn=0
+    execute 'setlocal' s:view_opts
     call s:ImgRender(bufnr(''))
   endif
 endfunction
@@ -2060,6 +2089,11 @@ nnoremap <silent> <leader>gt :call <SID>ToggleTimeline()<CR>
 " side by side, or one above the other when the window is too narrow for two
 function! s:DiffSplit(mods, rev) abort
   try
+    if exists('b:vimzip_view')
+      " a picture or PDF: the other version beside it (a line diff of the drawing means nothing)
+      execute (a:mods ==# '' ? 'leftabove' : a:mods) 'Gvsplit' (a:rev ==# '' ? ':%' : a:rev . ':%')
+      return
+    endif
     execute a:mods . ' ' . (winwidth(0) >= 2 * &winminwidth + 30 ? 'Gvdiffsplit' : 'Gdiffsplit') . ' ' . a:rev
   catch /E36:/
     echohl WarningMsg | echo 'No room to compare: close a panel or split' | echohl None
