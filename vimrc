@@ -1731,15 +1731,7 @@ function! s:Start() abort
   let s:session = s:SessionFile()
   if filereadable(s:session)
     execute 'silent! source' fnameescape(s:session)
-    " files deleted since then do not come back as empty tabs
-    for gone in filter(getbufinfo({'buflisted': 1}), 'v:val.name !=# "" && !filereadable(v:val.name) && !v:val.changed')
-      if len(getbufinfo({'buflisted': 1})) > 1
-        for w in gone.windows
-          call win_execute(w, 'bprevious')
-        endfor
-        execute 'silent! bwipeout' gone.bufnr
-      endif
-    endfor
+    call s:DropGone()
   else
     enew
   endif
@@ -1749,6 +1741,24 @@ function! s:Start() abort
   NERDTree
   wincmd p
   call s:Layout()
+endfunction
+
+" files of a restored session deleted since then do not come back as tabs (typing in one would
+" save it, and its folders, again); the last one gives way to an empty tab
+function! s:DropGone() abort
+  for gone in filter(getbufinfo({'buflisted': 1}), 'v:val.name !=# "" && !filereadable(v:val.name) && !v:val.changed')
+    if len(getbufinfo({'buflisted': 1})) > 1
+      for w in gone.windows
+        call win_execute(w, 'bprevious')
+      endfor
+    elseif !empty(gone.windows)
+      call win_execute(gone.windows[0], 'enew')
+      for w in gone.windows[1:]
+        call win_execute(w, 'buffer ' . winbufnr(gone.windows[0]))
+      endfor
+    endif
+    execute 'silent! bwipeout' gone.bufnr
+  endfor
 endfunction
 
 function! s:Save() abort
@@ -1785,6 +1795,7 @@ function! s:OpenProject(dir) abort
   let s:session = s:SessionFile()
   if filereadable(s:session)
     execute 'silent! source' fnameescape(s:session)
+    call s:DropGone()
   endif
   execute 'NERDTree' fnameescape(getcwd())
   wincmd p
