@@ -44,7 +44,7 @@ augroup END
 set fillchars+=vert:│
 " windows side by side: scrolling one line redrew the whole window (5x the output, a lagging
 " terminal while a key is held). The vim script asks whether the terminal has left/right margins.
-if $VIMZIP_DECSLRM ==# '1'
+if get(g:, 'vimzip_decslrm', 0)
   let &t_CV = "\e[%i%p1%d;%p2%ds"
   let &t_ti .= "\e[?69h"
   let &t_te = "\e[?69l" . &t_te
@@ -1590,6 +1590,8 @@ function! s:OpenProject(dir) abort
     execute 'silent! bwipeout!' b
   endfor
   silent! %bwipeout
+  " and its language servers: ALE keeps one per project root running until vim quits
+  silent! ALEStopAllLSPs
   execute 'cd' fnameescape(dir)
   let s:session = s:SessionFile()
   if filereadable(s:session)
@@ -1689,8 +1691,9 @@ endfunction
 " line instead of scrolling it (3x the output with a key held down, a terminal falling behind).
 " Only where it can scroll: the full screen width, or with the terminal's margins (see t_CV).
 function! s:RulerScroll() abort
-  if empty(s:rulers) || !get(get(v:event, 'all', {}), 'topline', 0)
-        \ || (&t_CV ==# '' && winwidth(0) < &columns)
+  " the windows that scrolled (with the mouse wheel not always the current one)
+  let wins = map(filter(keys(v:event), 'v:val =~# "^\\d\\+$" && v:event[v:val].topline'), 'win_id2win(str2nr(v:val))')
+  if empty(s:rulers) || empty(filter(wins, '&t_CV !=# "" || winwidth(v:val) == &columns'))
     return
   endif
   call map(copy(s:rulers), 'popup_hide(v:val)')
