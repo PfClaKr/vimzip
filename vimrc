@@ -213,10 +213,8 @@ augroup END
 let mapleader = ' '
 
 " ─── code: linting, go to definition, tags ───────────────────────────────────────────────────────
-" ALE: clangd when available, else the system C compiler
-" (clangd or not is settled at the end, with the resources: see s:Light)
-let s:lsp = executable('clangd')
-let g:ale_linters = {'c': ['cc'], 'cpp': ['cc'], 'sh': ['shellcheck']}
+" ALE runs the language servers (see "language servers" below) and plain checkers
+let g:ale_linters = {}
 let g:ale_lint_on_text_changed = 'never'
 let g:ale_lint_on_insert_leave = 0
 let g:ale_completion_enabled = 0
@@ -224,7 +222,6 @@ let g:ale_completion_enabled = 0
 let g:ale_detail_to_floating_preview = 1
 let g:ale_hover_to_floating_preview = 1
 let g:ale_floating_window_border = ['│', '─', '╭', '╮', '╯', '╰', '│', '─']
-autocmd FileType c,cpp if s:lsp | setlocal omnifunc=ale#completion#OmniFunc | endif
 
 " system headers: read-only, no linting
 let g:ale_pattern_options = {'^/usr/': {'ale_enabled': 0}}
@@ -253,10 +250,10 @@ function! s:SysTags() abort
   return 1
 endfunction
 
-" go to definition: clangd if present, else project tags, else included system headers
+" go to definition: the language server, else project tags, else (C/C++) included system headers
 function! s:GoDef() abort
   let c = &filetype =~# '^\(c\|cpp\)$'
-  if s:lsp && c
+  if s:LspHere()
     ALEGoToDefinition
     return
   endif
@@ -272,6 +269,141 @@ function! s:GoDef() abort
     echohl WarningMsg | echo 'No definition found: ' . w | echohl None
   endtry
 endfunction
+
+" ─── language servers ────────────────────────────────────────────────────────────────────────────
+" Per language: id (for :Lsp and g:vimzip_lsp), name, filetypes, and the servers to try in order as
+" [ALE linter, program, how to install]. One is on when installed (not under 1 GB free: s:Light);
+" :Lsp lists them and turns one on or off, kept in ~/.config/vimzip/lsp.json.
+let s:servers = [
+  \ ['c', 'C/C++', ['c', 'cpp'], [['clangd', 'clangd', 'install clangd (apt, brew, ...)']]],
+  \ ['rust', 'Rust', ['rust'], [['analyzer', 'rust-analyzer', 'rustup component add rust-analyzer']]],
+  \ ['python', 'Python', ['python'], [['pyright', 'pyright-langserver', 'npm install -g pyright'],
+  \                                  ['pylsp', 'pylsp', 'pip install python-lsp-server']]],
+  \ ['go', 'Go', ['go'], [['gopls', 'gopls', 'go install golang.org/x/tools/gopls@latest']]],
+  \ ['dart', 'Dart/Flutter', ['dart'], [['analysis_server', 'dart', 'install the Dart or Flutter SDK']]],
+  \ ['typescript', 'TypeScript/JS', ['typescript', 'javascript', 'typescriptreact', 'javascriptreact'],
+  \   [['tsserver', 'tsserver', 'npm install -g typescript']]],
+  \ ['lua', 'Lua', ['lua'], [['lua_language_server', 'lua-language-server', 'install lua-language-server']]],
+  \ ['bash', 'Bash', ['sh'], [['language_server', 'bash-language-server', 'npm install -g bash-language-server']]],
+  \ ['zig', 'Zig', ['zig'], [['zls', 'zls', 'install zls']]]]
+" plain checkers in place of a server that is off, or next to one (s:also); ALE skips missing ones
+let s:checkers = {'c': ['cc'], 'cpp': ['cc'], 'sh': ['shellcheck'], 'python': ['ruff', 'flake8'],
+  \ 'go': ['gofmt', 'govet'], 'lua': ['luacheck'], 'typescript': ['eslint'], 'javascript': ['eslint']}
+let s:also = {'python': ['ruff'], 'typescript': ['eslint'], 'javascript': ['eslint']}
+let s:lsp_file = expand('~/.config/vimzip/lsp.json')
+let s:lsp_on = {}  " filetype: the ALE linter of its server, while on
+function! s:LspSaved() abort
+  try
+    let d = json_decode(join(readfile(s:lsp_file), ''))
+    return type(d) == v:t_dict ? d : {}
+  catch
+    return {}
+  endtry
+endfunction
+" on PATH, and not one of rustup's stand-ins for a component it has not installed (rust-analyzer)
+function! s:Installed(prog) abort
+  let p = exepath(a:prog)
+  let rustup = fnamemodify(p, ':h') . '/rustup'
+  if p !=# '' && (resolve(p) =~# '/rustup$' || (executable(rustup) && getfsize(p) == getfsize(rustup)))
+    let home = $RUSTUP_HOME !=# '' ? $RUSTUP_HOME : expand('~/.rustup')
+    return !empty(glob(home . '/toolchains/*/bin/' . a:prog, 1, 1))
+  endif
+  return p !=# ''
+endfunction
+" [on/off/missing, program (or how to install), ALE linter]; :Lsp choices win over g:vimzip_lsp
+function! s:LspState(lang) abort
+  let want = get(extend(copy(get(g:, 'vimzip_lsp', {})), s:LspSaved()), a:lang[0], -1)
+  let servers = copy(a:lang[3])
+  if type(want) == v:t_string  " a server by name: let g:vimzip_lsp = {'python': 'pylsp'}
+    call filter(servers, 'v:val[0] ==# want')
+    let want = 1
+  endif
+  let found = filter(copy(servers), 's:Installed(v:val[1])')
+  if empty(found)
+    return ['missing', get(servers, 0, a:lang[3][0])[2], '']
+  endif
+  let on = want is -1 ? !(s:lite && s:res.mem < 1024) : !!want
+  return [on ? 'on' : 'off', found[0][1], found[0][0]]
+endfunction
+function! s:LspSetup() abort
+  let s:lsp_on = {}
+  for lang in s:servers
+    let [state, _, linter] = s:LspState(lang)
+    for ft in lang[2]
+      let g:ale_linters[ft] = state ==# 'on' ? [linter] + get(s:also, ft, []) : get(s:checkers, ft, [])
+      if state ==# 'on'
+        let s:lsp_on[ft] = linter
+      endif
+    endfor
+  endfor
+endfunction
+function! s:LspHere() abort
+  return has_key(s:lsp_on, &filetype)
+endfunction
+" the server's completion on Ctrl+x Ctrl+o
+function! s:LspOmni(buf) abort
+  if has_key(s:lsp_on, getbufvar(a:buf, '&filetype'))
+    call setbufvar(a:buf, '&omnifunc', 'ale#completion#OmniFunc')
+  elseif getbufvar(a:buf, '&omnifunc') ==# 'ale#completion#OmniFunc'
+    call setbufvar(a:buf, '&omnifunc', '')
+  endif
+endfunction
+augroup vimzip_lsp
+  autocmd!
+  autocmd FileType * call s:LspOmni(bufnr(''))
+augroup END
+" :Lsp {language} [on|off]: switch a server (no argument: the list); its open files are checked again
+function! s:LspSet(id, ...) abort
+  let lang = get(filter(copy(s:servers), 'v:val[0] ==# a:id'), 0, [])
+  if empty(lang)
+    echohl WarningMsg | echo 'Unknown language: ' . a:id . ' (' . join(map(copy(s:servers), 'v:val[0]'), ', ') . ')' | echohl None
+    return
+  endif
+  let [state, server, linter] = s:LspState(lang)
+  if state ==# 'missing'
+    echohl WarningMsg | echo lang[1] . ': no language server installed. To get one: ' . server | echohl None
+    return
+  endif
+  let on = a:0 ? a:1 =~? '^\(on\|1\)$' : state !=# 'on'
+  let saved = s:LspSaved()
+  let saved[a:id] = on ? 1 : 0
+  call mkdir(fnamemodify(s:lsp_file, ':h'), 'p')
+  call writefile([json_encode(saved)], s:lsp_file)
+  call s:LspSetup()
+  if !on
+    execute 'silent! ALEStopLSP!' linter
+  endif
+  for b in getbufinfo({'bufloaded': 1})
+    if index(lang[2], getbufvar(b.bufnr, '&filetype')) >= 0
+      call s:LspOmni(b.bufnr)
+      silent! call ale#Queue(0, 'lint_file', b.bufnr)
+    endif
+  endfor
+  echo lang[1] . ': ' . server . (on ? ' on' : ' off')
+endfunction
+function! s:LspMenu(...) abort
+  let lines = []
+  for lang in s:servers
+    let [state, server, _] = s:LspState(lang)
+    call add(lines, printf('%s %-14s %s', state ==# 'on' ? '●' : state ==# 'off' ? '○' : ' ', lang[1],
+          \ state ==# 'on' ? server : state ==# 'off' ? server . ' (off)' : 'not installed: ' . server))
+  endfor
+  let id = popup_menu(lines, {'title': ' Language servers  Enter: on/off  Esc: close ', 'callback': function('s:LspPicked'),
+        \ 'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'padding': [0, 1, 0, 1]})
+  call win_execute(id, 'call cursor(' . get(a:, 1, 1) . ', 1)')
+endfunction
+function! s:LspPicked(id, result) abort
+  if a:result > 0
+    call s:LspSet(s:servers[a:result - 1][0])
+    call s:LspMenu(a:result)
+  endif
+endfunction
+function! VimzipLspComplete(lead, line, pos) abort
+  let words = len(split(a:line[: a:pos - 1], ' ', 1)) <= 2 ? map(copy(s:servers), 'v:val[0]') : ['on', 'off']
+  return filter(words, 'stridx(v:val, a:lead) == 0')
+endfunction
+command! -nargs=* -complete=customlist,VimzipLspComplete Lsp
+      \ if <q-args> ==# '' | call s:LspMenu() | else | call s:LspSet(<f-args>) | endif
 
 " gutentags: keep tag files out of projects
 let g:gutentags_cache_dir = s:cache . '/tags'
@@ -1721,26 +1853,26 @@ nnoremap <C-l> <C-w>l
 " code: vim's gd / gr / K / ]e [e, VSCode's F12, Space c for the rest
 nnoremap <silent> <F12> :call <SID>GoDef()<CR>
 nnoremap <silent> gd :call <SID>GoDef()<CR>
-" :Man page (K without clangd)
+" :Man page (K without a language server)
 if executable('man')
   runtime ftplugin/man.vim
 endif
-" with clangd in C/C++: its references and hover; otherwise the word searched in the project
+" with a language server: its references and hover; otherwise the word searched in the project
 " (vim's own gr would start overwriting text) and the man page in a split
 function! s:Refs() abort
-  if s:lsp && &filetype =~# '^\(c\|cpp\)$'
+  if s:LspHere()
     ALEFindReferences
   else
     call s:FindText(expand('<cword>'))
   endif
 endfunction
 function! s:Docs() abort
-  if s:lsp && &filetype =~# '^\(c\|cpp\)$'
+  if s:LspHere()
     ALEHover
   elseif exists(':Man') == 2
     execute 'Man' expand('<cword>')
   else
-    echo 'No documentation: clangd or man is needed'
+    echo 'No documentation: a language server (:Lsp) or man is needed'
   endif
 endfunction
 nnoremap <silent> gr :call <SID>Refs()<CR>
@@ -1748,6 +1880,7 @@ nnoremap <silent> K :call <SID>Docs()<CR>
 nmap ]e <Plug>(ale_next_wrap)
 nmap [e <Plug>(ale_previous_wrap)
 nnoremap <silent> <leader>ce :ALEDetail<CR>
+nnoremap <silent> <leader>cl :Lsp<CR>
 nnoremap <silent> <leader>cf gg=G``
 
 " git: Space g; ]c / [c move between changes (vim's keys for that in a diff)
@@ -1856,14 +1989,13 @@ endif
 " On a small machine (s:res, under 2 CPUs or 1 GB free) do less in the background: line blame
 " starts off (Space gb), files are checked when saved rather than also when opened, the tree's
 " git colors and the change marks refresh less often, the completion word list is built when
-" first used, and clangd runs without its background index, or not at all under 1 GB free.
+" first used, clangd runs without its background index, and under 1 GB free language servers
+" start off (:Lsp turns one on).
 " :VimzipInfo shows what was found and chosen.
 function! s:Light() abort
   let auto = s:res.cpus < 2 || s:res.mem < 1024
   let s:lite = exists('g:vimzip_lite') ? g:vimzip_lite : $VIMZIP_LITE !=# '' ? str2nr($VIMZIP_LITE) : auto
-  let s:lsp = executable('clangd') && !(s:lite && s:res.mem < 1024)
-  let g:ale_linters.c = s:lsp ? ['clangd'] : ['cc']
-  let g:ale_linters.cpp = g:ale_linters.c
+  call s:LspSetup()
   if !s:lite
     return
   endif
@@ -1879,9 +2011,10 @@ endfunction
 call s:Light()
 function! s:Info() abort
   echo printf('CPUs %.1f, free memory %d MB: %s mode', s:res.cpus, s:res.mem, s:lite ? 'light' : 'full')
-  echo printf('rg threads %d, clangd %s, line blame %s, lint %s', s:jobs,
-        \ !executable('clangd') ? 'not installed' : !s:lsp ? 'off (memory)' : s:lite ? 'on, no background index' : 'on',
+  echo printf('rg threads %d, line blame %s, lint %s', s:jobs,
         \ g:vimzip_blame ? 'on' : 'off', get(g:, 'ale_lint_on_enter', 1) ? 'on open and save' : 'on save')
+  let on = map(filter(copy(s:servers), 's:LspState(v:val)[0] ==# "on"'), 'v:val[1] . " (" . s:LspState(v:val)[1] . ")"')
+  echo 'language servers: ' . (empty(on) ? 'none on' : join(on, ', ')) . ' (:Lsp to change)'
   echo printf('cache %d MB in %s (old entries are removed daily)', s:CacheSize(), fnamemodify(s:cache, ':~'))
   if s:lite
     echo 'g:vimzip_lite = 0 in ~/.config/vimzip/vimrc turns light mode off'

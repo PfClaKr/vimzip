@@ -60,6 +60,7 @@ let s:vimzip = [
       \   ['F12', 'go to definition (as gd)'],
       \   ['Space ce', 'error on this line in full'],
       \   ['Space cf', 'reindent the file'],
+      \   ['Space cl', 'language servers on / off'],
       \   ['click the right edge', 'jump to that change']]],
       \ ['Git', [
       \   ['Space gs', 'status window'],
@@ -181,6 +182,7 @@ let s:vim = [
 let s:plugin_cmds = [
       \ ['vimzip', [
       \   [':VimzipInfo', 'CPUs, memory, light or full mode'],
+      \   [':Lsp  :Lsp rust off', 'language servers: list, switch'],
       \   [':Find text', 'search the project'],
       \   [':Project path', 'open another project'],
       \   [':Theme name', 'status bar colors (:Theme lists)']]],
@@ -213,9 +215,9 @@ let s:plugin_cmds = [
       \ ['Errors and code (ALE)', [
       \   [':ALEInfo', 'linters and their output'],
       \   [':ALELint  :ALEToggle', 'check now / checking on, off'],
-      \   [':ALEFindReferences', 'references (clangd)'],
-      \   [':ALERename', 'rename a symbol (clangd)'],
-      \   [':ALECodeAction', 'quick fixes (clangd)']]],
+      \   [':ALEFindReferences', 'references (language server)'],
+      \   [':ALERename', 'rename a symbol (lang. server)'],
+      \   [':ALECodeAction', 'quick fixes (language server)']]],
       \ ['Tree, outline, tags', [
       \   [':NERDTreeFind', 'show this file in the tree'],
       \   [':NERDTree path', 'tree at another folder'],
