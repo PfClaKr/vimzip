@@ -414,8 +414,13 @@ function! s:LspSet(id, ...) abort
     echohl WarningMsg | echo 'Unknown language: ' . a:id . ' (' . join(map(copy(s:servers), 'v:val[0]'), ', ') . ')' | echohl None
     return
   endif
+  if a:0 && a:1 !~? '^\(on\|off\|1\|0\)$'
+    echohl WarningMsg | echo 'Lsp ' . a:id . ' on, or off (not ' . a:1 . ')' | echohl None
+    return
+  endif
   let [state, server, linter] = s:LspState(lang)
-  if state ==# 'missing'
+  " (one not installed yet can still be turned off ahead)
+  if state ==# 'missing' && !(a:0 && a:1 =~? '^\(off\|0\)$')
     echohl WarningMsg | echo lang[1] . ': no language server installed. To get one: ' . server | echohl None
     return
   endif
@@ -425,7 +430,7 @@ function! s:LspSet(id, ...) abort
   call mkdir(fnamemodify(s:lsp_file, ':h'), 'p')
   call writefile([json_encode(saved)], s:lsp_file)
   call s:LspSetup()
-  if !on
+  if !on && linter !=# ''
     execute 'silent! ALEStopLSP!' linter
   endif
   for b in getbufinfo({'bufloaded': 1})
@@ -434,7 +439,7 @@ function! s:LspSet(id, ...) abort
       silent! call ale#Queue(0, 'lint_file', b.bufnr)
     endif
   endfor
-  echo lang[1] . ': ' . server . (on ? ' on' : ' off')
+  echo lang[1] . ': ' . (state ==# 'missing' ? 'stays off when a language server is installed' : server . (on ? ' on' : ' off'))
 endfunction
 function! s:LspMenu(...) abort
   let lines = []
