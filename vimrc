@@ -548,7 +548,10 @@ function! s:CommitPopup() abort
   " paths as they are, not quoted with octal escapes (Korean and other non-ASCII names)
   let git = 'git -c core.quotepath=false -C ' . shellescape(expand('%:p:h'))
   let out = systemlist(git . ' blame --porcelain -L ' . line('.') . ',' . line('.') . ' -- ' . shellescape(expand('%:t')))
-  if v:shell_error || empty(out) | return | endif
+  if v:shell_error || empty(out)
+    " (a file added to git but never committed has no line in HEAD to blame)
+    let out = ['0']
+  endif
   let sha = matchstr(out[0], '^\x\+')
   let show = git . ' show --no-color --format=' . shellescape('%h  %an, %ar%n%n%B') . ' '
   if sha =~# '^0\+$'
@@ -2290,15 +2293,25 @@ function! s:InGit() abort
   return 1
 endfunction
 " (a command run from here: :Git in a mapping's if ... endif took the endif as its own)
-function! s:GitRun(cmd) abort
-  if s:InGit()
-    execute a:cmd
+" a:1: about the current file's history, which a new file git does not know has none (the
+" comparison was empty, the commit popup silent, blame a "fatal:" line)
+function! s:GitRun(cmd, ...) abort
+  if !s:InGit()
+    return
   endif
+  if get(a:, 1, 0) && &buftype ==# '' && filereadable(expand('%:p'))
+    call system('git -C ' . shellescape(expand('%:p:h')) . ' ls-files --error-unmatch -- ' . shellescape(expand('%:t')))
+    if v:shell_error
+      echohl WarningMsg | echo expand('%:t') . ' is not in git yet' | echohl None
+      return
+    endif
+  endif
+  execute a:cmd
 endfunction
 nnoremap <silent> <leader>gs :call <SID>EditWin()<Bar>call <SID>GitRun('Git')<CR>
-nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>CommitPopup()')<CR>
+nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>CommitPopup()', 1)<CR>
 nnoremap <silent> <leader>gb :call <SID>EditWin()<Bar>let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
-nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>call <SID>GitRun('Git blame')<CR>
+nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>call <SID>GitRun('Git blame', 1)<CR>
 nnoremap <silent> <leader>gh :call <SID>EditWin()<Bar>GV!<CR>
 xnoremap <silent> <leader>gh :GV<CR>
 nnoremap <silent> <leader>gl :call <SID>EditWin()<Bar>GV<CR>
@@ -2311,12 +2324,12 @@ function! s:DiffSplit(mods, rev) abort
       execute (a:mods ==# '' ? 'leftabove' : a:mods) 'Gvsplit' (a:rev ==# '' ? ':%' : a:rev . ':%')
       return
     endif
-    execute a:mods . ' ' . (winwidth(0) >= 2 * &winminwidth + 30 ? 'Gvdiffsplit' : 'Gdiffsplit') . ' ' . a:rev
+    execute a:mods . ' ' . (winwidth(0) >= 54 ? 'Gvdiffsplit' : 'Gdiffsplit') . ' ' . a:rev
   catch /E36:/
     echohl WarningMsg | echo 'No room to compare: close a panel or split' | echohl None
   endtry
 endfunction
-nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>DiffSplit("", "")')<CR>
+nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>DiffSplit("", "")', 1)<CR>
 nmap <silent> <leader>gp :call <SID>EditWin()<CR><Plug>(GitGutterPreviewHunk)
 nmap <silent> <leader>ga :call <SID>EditWin()<CR><Plug>(GitGutterStageHunk)
 nmap <silent> <leader>gu :call <SID>EditWin()<CR><Plug>(GitGutterUndoHunk)
