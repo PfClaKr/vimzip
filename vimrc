@@ -790,8 +790,9 @@ let $FZF_DEFAULT_COMMAND = 'rg -j ' . s:jobs . ' --files --hidden --glob "!.git"
 function! s:Find(query, bang, ...) abort
   " a:1: match the text as typed (no regex)
   let rg = 'rg -j ' . s:jobs . ' --column --line-number --no-heading --color=always --smart-case --hidden --glob "!.git" '
-        \ . (get(a:, 1, 0) ? '--fixed-strings ' : '') . '-- '
-  let reload = '[ -z {q} ] || ' . rg . '{q} || :'
+  " a query that is no valid regex (foo( or a[i): found as typed, not an error and no results
+  let reload = get(a:, 1, 0) ? '[ -z {q} ] || ' . rg . '-F -- {q} || :'
+        \ : '[ -z {q} ] || { ' . rg . '-- {q} 2>/dev/null; [ $? -ne 2 ] || ' . rg . '-F -- {q}; } || :'
   call fzf#vim#grep(':', fzf#vim#with_preview({'options': ['--disabled', '--query', a:query,
     \ '--prompt', 'Find> ', '--bind', 'start:reload:' . reload, '--bind', 'change:reload:' . reload]}), a:bang)
 endfunction
