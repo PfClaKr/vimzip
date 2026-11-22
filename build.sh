@@ -24,7 +24,8 @@ cp -r autoload themes "$D/"
 
 # smoke test + help tags
 VIMZIP=$D VIMRUNTIME=$D/runtime "$D/bin/vim" -u "$D/vimrc" -i NONE -es \
-  -c 'helptags ALL' -c 'if !exists(":ALEInfo") | cquit | endif' -c 'qa!'
+  -c 'helptags ALL' -c 'if !exists(":ALEInfo") | cquit | endif' \
+  -c 'if iconv("\uac00", "utf-8", "cp949") ==# "" | cquit | endif' -c 'qa!'
 "$D/bin/vim" --version | head -n 2
 
 cd "$R/build"

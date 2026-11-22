@@ -13,6 +13,8 @@ ctags=$(latest universal-ctags/ctags-nightly-build '^[0-9]{4}\.[0-9]{2}\.[0-9]{2
 fzf=$(latest junegunn/fzf '^v[0-9]+\.[0-9]+\.[0-9]+$')
 sc=$(latest koalaman/shellcheck '^v[0-9]+\.[0-9]+\.[0-9]+$')
 rg=$(latest BurntSushi/ripgrep '^[0-9]+\.[0-9]+\.[0-9]+$')
+# GNU libiconv is not on GitHub and changes rarely: kept as it is
+iconv=$(sed -n 's/^LIBICONV_VERSION=//p' versions.env)
 cat > versions.env <<EOV
 VIM_VERSION=$vim
 NCURSES_VERSION=$ncurses
@@ -20,4 +22,5 @@ CTAGS_VERSION=$ctags
 FZF_VERSION=$fzf
 SHELLCHECK_VERSION=$sc
 RG_VERSION=$rg
+LIBICONV_VERSION=$iconv
 EOV

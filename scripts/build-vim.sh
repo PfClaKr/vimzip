@@ -29,9 +29,25 @@ cd "$W/ncurses"
 make -s -j"$J" >/dev/null
 make -s install >/dev/null
 
+# GNU libiconv for vim's encoding conversions: musl's iconv only reads CJK encodings, so a file in
+# CP949, EUC-KR, Shift-JIS or GBK opened fine but could not be saved (E213). ICONV_PREFIX: use an
+# installed one instead.
+if [ -z "${ICONV_PREFIX:-}" ]; then
+  mkdir -p "$W/libiconv"
+  for i in 1 2 3 4; do
+    curl -fsSL "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-$LIBICONV_VERSION.tar.gz" |
+      tar -xz -C "$W/libiconv" --strip-components=1 && break
+    sleep $((i * 5))
+  done
+  (cd "$W/libiconv" && ./configure -q CC="$CC" --prefix="$W/iconv" --enable-static --disable-shared --disable-nls &&
+    make -s -j"$J" >/dev/null && make -s install >/dev/null)
+  ICONV_PREFIX=$W/iconv
+fi
+
 cd "$W/vim"
 PKG_CONFIG=false ./configure -q CC="$CC" --prefix=/usr \
-  CPPFLAGS="-I$W/nc/include -I$W/nc/include/ncursesw" LDFLAGS="-static -L$W/nc/lib" \
+  CPPFLAGS="-I$ICONV_PREFIX/include -I$W/nc/include -I$W/nc/include/ncursesw" \
+  LDFLAGS="-static -L$ICONV_PREFIX/lib -L$W/nc/lib" \
   --with-features=huge --with-tlib=ncursesw --enable-multibyte \
   --disable-gui --without-x --disable-gpm --disable-sysmouse --disable-nls --disable-acl \
   --disable-selinux --disable-smack --disable-canberra --disable-libsodium --disable-xsmp --disable-pixman
