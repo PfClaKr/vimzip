@@ -7,6 +7,21 @@ let s:cache = expand('~/.cache/vimzip')
 for s:d in ['undo', 'sessions', 'tags', 'systags', 'words', 'backup']
   silent! call mkdir(s:cache . '/' . s:d, 'p')
 endfor
+" a cache file named after a path ('/' as '%'), or after a hash of it when that name would be too
+" long for a file name (255 bytes, reached sooner with Korean; room left for a '.tmp')
+function! s:CacheName(path, ext) abort
+  let name = substitute(a:path, '[/\\:]', '%', 'g') . a:ext
+  return strlen(name) <= 240 ? name : sha256(a:path) . a:ext
+endfunction
+" the folder a session file is for: from its name, or (a hashed name) its cd line
+function! s:SessionDir(file) abort
+  let name = fnamemodify(a:file, ':t:r')
+  if name =~# '%'
+    return substitute(name, '%', '/', 'g')
+  endif
+  let cd = matchstr(join(filter(readfile(a:file, '', 40), 'v:val =~# "^cd "')[: 0]), '^cd \zs.*')
+  return substitute(cd, '\\\(.\)', '\1', 'g')
+endfunction
 
 " built-in packages
 let g:loaded_netrw = 1
@@ -61,6 +76,27 @@ set backspace=indent,eol,start wildmenu wildoptions=pum display=lastline
 set ttimeout ttimeoutlen=50 updatetime=300
 set completeopt=menuone,popup noautocomplete
 set undofile
+" vim names an undo file after the whole path: for one longer than a file name may be, every save
+" failed to write it (E828) and the history was lost. Those keep it under a hash of the path.
+function! s:LongUndo(event) abort
+  let f = expand('<afile>:p')
+  if &buftype !=# '' || f ==# '' || strlen(f) <= 250
+    return
+  endif
+  setlocal noundofile
+  let u = s:cache . '/undo/' . sha256(f)
+  if a:event ==# 'read' && filereadable(u)
+    silent! execute 'rundo' fnameescape(u)
+  elseif a:event ==# 'write'
+    silent! execute 'wundo!' fnameescape(u)
+  endif
+endfunction
+augroup vimzip_undo
+  autocmd!
+  autocmd BufReadPost * call s:LongUndo('read')
+  autocmd BufWritePre * call s:LongUndo('before')
+  autocmd BufWritePost * call s:LongUndo('write')
+augroup END
 let &undodir = s:cache . '/undo'
 " no swap files: changes are saved within a second anyway, and a swap file only gets in the way
 " (the E325 prompt) when a project is open in two vims
@@ -86,7 +122,9 @@ function! s:AutoSave() abort
     try
       silent update
     catch
-      echohl ErrorMsg | echomsg 'Not saved: ' . substitute(v:exception, '^Vim(\a\+):', '', '') | echohl None
+      echohl ErrorMsg
+      echomsg (&modified ? 'Not saved: ' : 'Saved, but: ') . substitute(v:exception, '^Vim(\a\+):', '', '')
+      echohl None
     endtry
   endif
 endfunction
@@ -250,7 +288,7 @@ function! s:SysTags() abort
   let out = system(cc . ' -M -MG -w ' . flags . ' ' . join(map(dirs, '"-I" . shellescape(v:val)')) . ' ' . shellescape(src))
   let hdrs = filter(split(out), 'v:val =~# "^/" && v:val !=# src')
   if empty(hdrs) | return 0 | endif
-  let f = s:cache . '/systags/' . substitute(src, '[/\\:]', '%', 'g') . '.tags'
+  let f = s:cache . '/systags/' . s:CacheName(src, '.tags')
   call system('ctags --languages=C,C++ --langmap=C:+.h --kinds-C=+px --kinds-C++=+px -L - -f '
         \ . shellescape(f), join(hdrs, "\n"))
   if v:shell_error | return 0 | endif
@@ -1600,7 +1638,7 @@ function! s:Words() abort
   endif
   if !executable('rg') | return | endif
   let s:words_at = localtime()
-  let f = s:cache . '/words/' . substitute(getcwd(), '[/\\:]', '%', 'g') . '.txt'
+  let f = s:cache . '/words/' . s:CacheName(getcwd(), '.txt')
   if filereadable(f)
     call s:UseWords(f)
   endif
@@ -1650,7 +1688,7 @@ endfunction
 " ─── sessions and projects ───────────────────────────────────────────────────────────────────────
 " per-folder session, used when started as `vim <dir>`
 function! s:SessionFile() abort
-  return s:cache . '/sessions/' . substitute(getcwd(), '[/\\:]', '%', 'g') . '.vim'
+  return s:cache . '/sessions/' . s:CacheName(getcwd(), '.vim')
 endfunction
 set sessionoptions=buffers,curdir,folds,tabpages,winsize
 
@@ -1731,7 +1769,7 @@ endfunction
 function! s:RecentProjects() abort
   let files = glob(s:cache . '/sessions/*.vim', 0, 1)
   call sort(files, {a, b -> getftime(b) - getftime(a)})
-  let dirs = map(files, {_, f -> substitute(fnamemodify(f, ':t:r'), '%', '/', 'g')})
+  let dirs = map(files, {_, f -> s:SessionDir(f)})
   return map(filter(dirs, {_, d -> isdirectory(d) && d !=# getcwd()}), {_, d -> fnamemodify(d, ':~')})
 endfunction
 function! s:PickProject() abort
@@ -1837,10 +1875,12 @@ function! s:Prune(...) abort
   call writefile([], stamp)
   let day = 86400
   let Path = {f -> substitute(fnamemodify(f, ':t:r'), '%', '/', 'g')}
-  let rules = [['undo/*', 365, {f -> filereadable(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}],
-        \      ['sessions/*.vim', 365, {f -> isdirectory(Path(f))}],
-        \      ['words/*.txt', 90, {f -> isdirectory(Path(f))}],
-        \      ['systags/*.tags', 90, {f -> filereadable(Path(f))}],
+  " (a hashed name, see s:CacheName, cannot be traced back to its file: it only ages)
+  let Hashed = {f -> fnamemodify(f, ':t') !~# '%'}
+  let rules = [['undo/*', 365, {f -> Hashed(f) || filereadable(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}],
+        \      ['sessions/*.vim', 365, {f -> isdirectory(s:SessionDir(f))}],
+        \      ['words/*.txt', 90, {f -> Hashed(f) || isdirectory(Path(f))}],
+        \      ['systags/*.tags', 90, {f -> Hashed(f) || filereadable(Path(f))}],
         \      ['tags/*-tags', 90, {f -> 1}],
         \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}]]
   for [pat, days, Exists] in rules
