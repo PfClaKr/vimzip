@@ -76,7 +76,13 @@ augroup END
 function! s:AutoSave() abort
   if &modified && &buftype ==# '' && &modifiable && !&readonly && expand('%') !=# ''
         \ && &filetype !~# '^\(gitcommit\|gitrebase\)$'
-    silent! update
+    " a failed save says so (no permission, disk full, an encoding that cannot be written):
+    " silently the file stayed as it was while the tab looked saved
+    try
+      silent update
+    catch
+      echohl ErrorMsg | echomsg 'Not saved: ' . substitute(v:exception, '^Vim(\a\+):', '', '') | echohl None
+    endtry
   endif
 endfunction
 augroup vimzip_autosave
@@ -478,7 +484,8 @@ function! s:BlameShow(buf, lnum, out) abort
 endfunction
 " commit of the current line in a popup (Space gc)
 function! s:CommitPopup() abort
-  let git = 'git -C ' . shellescape(expand('%:p:h'))
+  " paths as they are, not quoted with octal escapes (Korean and other non-ASCII names)
+  let git = 'git -c core.quotepath=false -C ' . shellescape(expand('%:p:h'))
   let out = systemlist(git . ' blame --porcelain -L ' . line('.') . ',' . line('.') . ' -- ' . shellescape(expand('%:t')))
   if v:shell_error || empty(out) | return | endif
   let sha = matchstr(out[0], '^\x\+')
@@ -571,7 +578,7 @@ function! s:TimelineUpdate() abort
     return
   endif
   let [dir, name, out] = [shellescape(fnamemodify(f, ':h')), shellescape(fnamemodify(f, ':t')), []]
-  let cmd = 'cd ' . dir . ' && git status --porcelain -- ' . name . '; echo @@; git log --follow -n 300 --name-only'
+  let cmd = 'cd ' . dir . ' && git status --porcelain -- ' . name . '; echo @@; git -c core.quotepath=false log --follow -n 300 --name-only'
         \ . ' --format=%x01%h%x09%at%x09%an%x09%s -- ' . name
   call job_start(['sh', '-c', cmd], {'err_io': 'null', 'out_cb': {_, l -> add(out, l)},
         \ 'close_cb': {_ -> s:TimelineRender(f, out)}})
