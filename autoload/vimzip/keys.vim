@@ -1,9 +1,9 @@
-" Space ? : every key and : command on one page. Two parts, keys then commands, each in two
-" halves (what vimzip and its plugins add / what vim has anyway), grouped by topic. Side by side on
-" a wide screen, one under the other on a narrow one. j/k, Ctrl+d/u and the mouse wheel scroll,
-" Tab jumps between keys and commands, q or Esc closes.
+" Space ? : every key and : command, on three pages (keys vimzip adds, vim's own keys, :commands),
+" each grouped by topic in two columns on a wide screen. Tab or 1 2 3 change the page, / searches
+" all of them as you type, j/k, Ctrl+d/u and the mouse wheel scroll, q or Esc closes.
 
-" [topic, [[keys, what it does], ...]]; an entry with no keys is a small note under the topic
+" [topic, [[keys, what it does], ...]]: keys two spaces apart are alternatives; '>' starts a
+" subheading, no keys a note on the entry above
 let s:vimzip = [
       \ ['Find', [
       \   ['Ctrl+p  Space ff', 'file by name'],
@@ -13,7 +13,7 @@ let s:vimzip = [
       \   ['Space fb  Space fr', 'open files / recent files'],
       \   ['Space ft', 'function or struct by name'],
       \   ['Space fp', 'open another project'],
-      \   ['', 'in the search window'],
+      \   ['>', 'in the search window'],
       \   ['Enter', 'open'],
       \   ['Ctrl+v  Ctrl+x', 'open beside / below'],
       \   ['Ctrl+j  Ctrl+k', 'next / previous result'],
@@ -62,7 +62,7 @@ let s:vimzip = [
       \   ['Space cf', 'reindent the file'],
       \   ['Space cl', 'language servers on / off'],
       \   ['click the right edge', 'jump to that change'],
-      \   ['o  (picture, PDF)', 'open in the system viewer']]],
+      \   ['o', 'picture or PDF: system viewer']]],
       \ ['Git', [
       \   ['Space gs', 'status window'],
       \   ['Space gc', 'commit of this line'],
@@ -143,7 +143,7 @@ let s:vim = [
       \   ['v  V  Ctrl+v', 'characters / lines / block'],
       \   ['gv', 'the last selection again'],
       \   ['o', 'go to the other end'],
-      \   ['', 'then'],
+      \   ['>', 'then, on the selection'],
       \   ['y  Ctrl+c', 'copy (local clipboard too)'],
       \   ['d  c', 'delete / retype'],
       \   ['>  <  =', 'indent / unindent / reindent'],
@@ -278,100 +278,216 @@ let s:vim_cmds = [
       \ ]
 
 function! s:Highlights() abort
-  highlight default link VimzipHelpKey Function
+  highlight default link VimzipHelpKey VimzipBar
   highlight default link VimzipHelpTopic Title
+  highlight default link VimzipHelpRule NonText
+  highlight default link VimzipHelpSub Identifier
   highlight default link VimzipHelpNote Comment
-  highlight default link VimzipHelpHalf VimzipBar
-  for [name, hl] in [['key', 'VimzipHelpKey'], ['topic', 'VimzipHelpTopic'], ['note', 'VimzipHelpNote'], ['half', 'VimzipHelpHalf']]
+  highlight default link VimzipHelpMatch Search
+  for name in ['Key', 'Topic', 'Rule', 'Sub', 'Note', 'Match']
     if empty(prop_type_get('vimzip_help_' . name))
-      call prop_type_add('vimzip_help_' . name, {'highlight': hl})
+      call prop_type_add('vimzip_help_' . name, {'highlight': 'VimzipHelp' . name, 'priority': name ==# 'Match' ? 20 : 10})
     endif
   endfor
 endfunction
 
-" one half as rows of [text, [[byte col, byte length, prop], ...]], all padded to the same width
-function! s:Half(title, topics) abort
-  let keyw = 0
-  for [_, rows] in a:topics
-    for [k, _] in rows
-      let keyw = max([keyw, strdisplaywidth(k)])
-    endfor
+let s:pages = [['Keys vimzip adds', 's:vimzip'], ["Vim's own keys", 's:vim'], [':commands', 's:cmds']]
+let s:cmds = []
+
+" the keys of an entry as separate chips ('Ctrl+p  Space ff': two alternatives); [text, props]
+function! s:Chips(keys) abort
+  if a:keys =~# '^\(click\|drag\) '
+    return [a:keys, [[0, strlen(a:keys), 'Sub']]]  " a mouse action, not keys
+  endif
+  let [text, props] = ['', []]
+  for k in split(a:keys, '\s\{2,}')
+    if text !=# ''
+      let text .= ' '
+    endif
+    call add(props, [strlen(text), strlen(k), 'Key'])
+    let text .= k
   endfor
-  let out = [[' ' . a:title . ' ', [[1, strlen(a:title) + 2, 'half']]], ['', []]]
-  for [topic, rows] in a:topics
-    call add(out, [' ' . topic, [[2, strlen(topic), 'topic']]])
-    for [k, what] in rows
-      if k ==# ''
-        call add(out, ['   ' . what, [[4, strlen(what), 'note']]])
-      else
-        let pad = repeat(' ', keyw - strdisplaywidth(k) + 3)
-        call add(out, ['   ' . k . pad . what, [[4, strlen(k), 'key']]])
-      endif
-    endfor
-    call add(out, ['', []])
-  endfor
-  let width = max(map(copy(out), 'strdisplaywidth(v:val[0])'))
-  return [out, width]
+  return [text, props]
 endfunction
 
-" two halves side by side when the screen is wide enough, else one under the other
-function! s:Pair(left, right, side) abort
-  let [left, lw] = a:left
-  let [right, rw] = a:right
-  if !a:side
-    return left + right
-  endif
-  let rows = []
-  for i in range(max([len(left), len(right)]))
-    let [lt, lp] = get(left, i, ['', []])
-    let [rt, rp] = get(right, i, ['', []])
-    let lt .= repeat(' ', lw - strdisplaywidth(lt) + 4)
-    let props = copy(lp)
-    for [col, len, type] in rp
-      call add(props, [col + strlen(lt), len, type])
-    endfor
-    call add(rows, [lt . rt, props])
+" one topic as rows [text, [[byte col (0-based), byte length, highlight], ...]] in a column of
+" width w, keys in the first keyw cells
+function! s:Block(topic, rows, w, keyw) abort
+  let rule = repeat('─', max([2, a:w - strdisplaywidth(a:topic) - 2]))
+  let out = [[a:topic . ' ' . rule, [[0, strlen(a:topic), 'Topic'], [strlen(a:topic) + 1, strlen(rule), 'Rule']]]]
+  for [k, what] in a:rows
+    if k ==# '>'
+      call add(out, ['  ' . what . ':', [[2, strlen(what) + 1, 'Sub']]])
+    elseif k ==# ''
+      let pad = repeat(' ', a:keyw + 4)
+      call add(out, [pad . '↳ ' . what, [[strlen(pad), strlen('↳ ' . what), 'Note']]])
+    else
+      let [chips, props] = s:Chips(k)
+      let pad = repeat(' ', a:keyw - strdisplaywidth(chips) + 2)
+      call add(out, ['  ' . chips . pad . what, map(props, '[v:val[0] + 2, v:val[1], v:val[2]]')])
+    endif
   endfor
-  return rows
+  return out + [['', []]]
+endfunction
+
+" topics laid out in two columns when they fit (each topic stays whole, the columns about even),
+" else one
+function! s:Layout(topics, width) abort
+  let keyw = 0
+  let descw = 0
+  for [_, rows] in a:topics
+    for [k, what] in rows
+      if k ==# ''
+        let descw = max([descw, strdisplaywidth('↳ ' . what)])
+      elseif k !=# '>'
+        let keyw = max([keyw, strdisplaywidth(s:Chips(k)[0])])
+        let descw = max([descw, strdisplaywidth(what)])
+      endif
+    endfor
+  endfor
+  let colw = max([keyw + 4 + descw, 24])
+  let two = 2 * colw + 4 <= a:width
+  let blocks = map(copy(a:topics), 's:Block(v:val[0], v:val[1], colw, keyw)')
+  if !two || len(blocks) < 2
+    return [flatten(blocks, 1), colw]
+  endif
+  " the split that leaves the taller column shortest
+  let total = eval(join(map(copy(blocks), 'len(v:val)'), '+'))
+  let [best, at, left] = [total, 1, 0]
+  for i in range(1, len(blocks) - 1)
+    let left += len(blocks[i - 1])
+    if max([left, total - left]) < best
+      let [best, at] = [max([left, total - left]), i]
+    endif
+  endfor
+  let [l, r] = [flatten(blocks[: at - 1], 1), flatten(blocks[at :], 1)]
+  let rows = []
+  for i in range(max([len(l), len(r)]))
+    let [lt, lp] = get(l, i, ['', []])
+    let [rt, rp] = get(r, i, ['', []])
+    let lt .= repeat(' ', colw + 4 - strdisplaywidth(lt))
+    call add(rows, [lt . rt, lp + map(copy(rp), '[v:val[0] + strlen(lt), v:val[1], v:val[2]]')])
+  endfor
+  return [rows, 2 * colw + 4]
+endfunction
+
+" the rows of every page whose keys or description contain the query, under their topics
+function! s:Matching(query) abort
+  let found = []
+  for [title, var] in s:pages
+    for [topic, rows] in eval(var)
+      " a topic whose name matches comes whole, else just its matching entries
+      let hits = stridx(tolower(topic), tolower(a:query)) >= 0 ? rows
+            \ : filter(copy(rows), 'v:val[0] !~# "^>\\=$" && stridx(tolower(v:val[0] . " " . v:val[1]), tolower(a:query)) >= 0')
+      if !empty(hits)
+        call add(found, [topic . '  (' . title . ')', hits])
+      endif
+    endfor
+  endfor
+  return found
+endfunction
+
+function! s:Render() abort
+  let width = &columns - 6
+  if s:query !=# ''
+    let [rows, w] = s:Layout(s:Matching(s:query), width)
+    if empty(rows)
+      let rows = [['No key or command contains "' . s:query . '"', [[0, 0, 'Note']]]]
+    endif
+  else
+    let [rows, w] = s:Layout(eval(s:pages[s:page][1]), width)
+  endif
+  " the query highlighted where it appears
+  if s:query !=# ''
+    for r in rows
+      let i = stridx(tolower(r[0]), tolower(s:query))
+      while i >= 0
+        call add(r[1], [i, strlen(s:query), 'Match'])
+        let i = stridx(tolower(r[0]), tolower(s:query), i + 1)
+      endwhile
+    endfor
+  endif
+  let text = map(rows, {_, r -> {'text': r[0], 'props': map(filter(copy(r[1]), 'v:val[1] > 0'),
+        \ {_, p -> {'col': p[0] + 1, 'length': p[1], 'type': 'vimzip_help_' . p[2]}})}})
+  " one size for every page and search, the largest page's: the box does not jump about
+  if !exists('s:size')
+    let s:size = [0, 0]
+    for [_, var] in s:pages
+      let [r, pw] = s:Layout(eval(var), width)
+      let s:size = [max([s:size[0], min([pw, width])]), max([s:size[1], min([len(r), &lines - 4])])]
+    endfor
+  endif
+  call popup_settext(s:id, text)
+  call popup_setoptions(s:id, {'title': s:Title(), 'minheight': s:size[1], 'maxheight': s:size[1],
+        \ 'minwidth': s:size[0], 'maxwidth': s:size[0], 'firstline': 1})
+  let s:first = 1
+  let s:last = max([1, len(text) - s:size[1] + 1])
+endfunction
+
+" the pages as tabs, the current one in brackets; or the search being typed
+function! s:Title() abort
+  if s:typing || s:query !=# ''
+    return printf(' Search: %s%s   %s ', s:query, s:typing ? '_' : '',
+          \ s:typing ? 'Enter: keep   Esc: clear' : '/ search again   Esc: all keys   q close')
+  endif
+  let tabs = map(copy(s:pages), {i, p -> i == s:page ? '[' . (i + 1) . ' ' . p[0] . ']' : ' ' . (i + 1) . ' ' . p[0] . ' '})
+  return ' ' . join(tabs, ' ') . '     Tab next page   / search   j k scroll   q close '
 endfunction
 
 function! vimzip#keys#show() abort
   call s:Highlights()
-  let halves = [s:Half('Keys added by vimzip', s:vimzip), s:Half("Vim's own keys (they all work)", s:vim),
-        \ s:Half(':commands from the plugins', s:plugin_cmds), s:Half(':commands of vim', s:vim_cmds)]
-  let side = max([halves[0][1], halves[2][1]]) + 4 + max([halves[1][1], halves[3][1]]) + 4 <= &columns
-  " the same column width in both parts, so the right halves line up
-  if side
-    let [halves[0][1], halves[2][1]] = repeat([max([halves[0][1], halves[2][1]])], 2)
-  endif
-  let keys = s:Pair(halves[0], halves[1], side)
-  let s:cmds_at = len(keys) + 1
-  let rows = keys + s:Pair(halves[2], halves[3], side)
-  let text = map(rows, {_, r -> {'text': r[0], 'props': map(copy(r[1]),
-        \ {_, p -> {'col': p[0], 'length': p[1], 'type': 'vimzip_help_' . p[2]}})}})
-  let height = min([len(text), &lines - 4])
-  call popup_create(text, {'title': ' Keys and commands   j k scroll   Tab keys / commands   q close ',
-        \ 'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'padding': [0, 1, 0, 1],
-        \ 'minheight': height, 'maxheight': height, 'scrollbar': 1, 'filter': function('s:Filter'),
-        \ 'mapping': 0, 'zindex': 300, 'highlight': 'Normal'})
-  let s:first = 1
-  let s:last = max([1, len(text) - height + 1])
+  let s:cmds = map(copy(s:plugin_cmds), '[v:val[0], v:val[1]]') + s:vim_cmds
+  let [s:page, s:query, s:typing] = [get(s:, 'page', 0), '', 0]
+  unlet! s:size
+  let s:id = popup_create('', {'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
+        \ 'padding': [0, 1, 0, 1], 'scrollbar': 1, 'filter': function('s:Filter'), 'mapping': 0,
+        \ 'zindex': 300, 'highlight': 'Normal'})
+  call s:Render()
 endfunction
 
 function! s:Filter(id, key) abort
+  if s:typing
+    if a:key ==# "\<CR>"
+      let s:typing = 0
+    elseif a:key ==# "\<Esc>"
+      let [s:typing, s:query] = [0, '']
+    elseif a:key ==# "\<BS>" || a:key ==# "\<C-h>"
+      let s:query = s:query[: -2]
+    elseif a:key ==# "\<C-u>"
+      let s:query = ''
+    elseif a:key =~# '^\p$' || (strchars(a:key) == 1 && char2nr(a:key) > 127)
+      let s:query .= a:key
+    else
+      return a:key[0] ==# "\x80" ? 0 : 1
+    endif
+    call s:Render()
+    return 1
+  endif
   let page = popup_getpos(a:id).core_height
   let steps = {'j': 1, "\<Down>": 1, "\<C-e>": 1, "\<ScrollWheelDown>": 3,
         \ 'k': -1, "\<Up>": -1, "\<C-y>": -1, "\<ScrollWheelUp>": -3,
         \ "\<C-d>": page / 2, "\<C-u>": -page / 2, "\<C-f>": page, "\<PageDown>": page, ' ': page,
         \ "\<C-b>": -page, "\<PageUp>": -page, 'g': -9999, 'G': 9999}
-  if a:key ==# "\<Tab>"
-    let s:first = s:first < s:cmds_at ? min([s:cmds_at, s:last]) : 1
-    call popup_setoptions(a:id, {'firstline': s:first})
-    return 1
-  endif
   if has_key(steps, a:key)
     let s:first = max([1, min([s:last, s:first + steps[a:key]])])
     call popup_setoptions(a:id, {'firstline': s:first})
+    return 1
+  endif
+  let pages = {"\<Tab>": 1, "\<S-Tab>": -1, 'l': 1, 'h': -1, "\<Right>": 1, "\<Left>": -1}
+  if has_key(pages, a:key) || a:key =~# '^[1-3]$'
+    let s:page = a:key =~# '^[1-3]$' ? a:key - 1 : (s:page + pages[a:key] + 3) % 3
+    let s:query = ''
+    call s:Render()
+    return 1
+  endif
+  if a:key ==# '/'
+    let [s:typing, s:query] = [1, '']
+    call s:Render()
+    return 1
+  endif
+  if a:key ==# "\<Esc>" && s:query !=# ''
+    let s:query = ''
+    call s:Render()
     return 1
   endif
   if index(['q', 'x', "\<Esc>", '?', "\<CR>", "\<LeftMouse>"], a:key) >= 0
