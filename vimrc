@@ -812,9 +812,14 @@ endfunction
 command! -bang -nargs=* Find call s:Find(<q-args>, <bang>0)
 " search for the selection / the word under the cursor, as plain text
 function! s:FindText(text) abort
-  let text = split(a:text, "\n")
+  let text = get(split(a:text, "\n"), 0, '')
   call s:EditWin()
-  call s:Find(empty(text) ? '' : text[0], 0, 1)
+  if text =~# "\t"
+    " fzf turns a tab in the query into a space: the tab goes as a regex \t instead
+    call s:Find(substitute(escape(text, '\.^$|?*+()[]{}'), "\t", '\\t', 'g'), 0)
+  else
+    call s:Find(text, 0, 1)
+  endif
 endfunction
 
 " ─── file tree ───────────────────────────────────────────────────────────────────────────────────
