@@ -1901,8 +1901,29 @@ function! s:CacheSize() abort
   return total / 1048576
 endfunction
 
+" a file opened in a side panel's window (:e or :b typed in the tree) took the panel's place: the
+" panel goes back, the file to the editor
+let s:panels = ['nerdtree', 'tagbar', 'vimziptimeline']
+function! s:KeepPanel(win, buf) abort
+  let prev = getbufvar(a:buf, '&buftype') ==# '' ? win_execute(a:win, 'echon bufnr("#")') : ''
+  if win_getid() != a:win || winbufnr(0) != a:buf || prev ==# '' || prev < 1
+        \ || index(s:panels, getbufvar(str2nr(prev), '&filetype')) < 0
+    return
+  endif
+  let editors = filter(range(1, winnr('$')), 'v:val != winnr() && getbufvar(winbufnr(v:val), "&buftype") ==# ""
+        \ && index(s:panels, getbufvar(winbufnr(v:val), "&filetype")) < 0')
+  if empty(editors)
+    return
+  endif
+  let editor = index(map(copy(editors), 'win_getid(v:val)'), get(s:, 'editor', 0)) >= 0 ? s:editor : win_getid(editors[0])
+  execute 'buffer' prev
+  call win_gotoid(editor)
+  execute 'buffer' a:buf
+endfunction
+
 augroup vimzip
   autocmd!
+  autocmd BufEnter * let s:enter = [win_getid(), bufnr('')] | call timer_start(0, {-> s:KeepPanel(s:enter[0], s:enter[1])})
   autocmd VimEnter * call timer_start(5000, function('s:Prune'))
   autocmd VimEnter * call s:FastNERDTree()
   autocmd VimEnter * ++nested call s:Start()
