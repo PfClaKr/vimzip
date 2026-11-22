@@ -125,13 +125,22 @@ function! s:AutoSave() abort
     endtry
   endif
 endfunction
+" the batched save waits while a prompt or the command line is up (:cdo ends at "Press ENTER", and
+" the last file it changed stayed unsaved); typing saves on leaving insert mode instead
+function! s:SaveLater(...) abort
+  if mode() ==# 'n'
+    call s:AutoSave()
+  elseif mode() !~# '^[iR]'
+    let s:save_timer = timer_start(500, function('s:SaveLater'))
+  endif
+endfunction
 augroup vimzip_autosave
   autocmd!
   " ++nested: the write must fire BufWritePost, or linting, git signs and tags never see the save
   autocmd InsertLeave,FocusLost,BufLeave * ++nested call s:AutoSave()
   " batch quick normal-mode edits (x, dd, ...) into one save, so linters and ctags run once
   autocmd TextChanged * call timer_stop(get(s:, 'save_timer', -1))
-        \ | let s:save_timer = timer_start(1000, {-> mode() ==# 'n' ? s:AutoSave() : 0})
+        \ | let s:save_timer = timer_start(1000, function('s:SaveLater'))
   autocmd FocusGained,BufEnter,CursorHold * silent! checktime
 augroup END
 
