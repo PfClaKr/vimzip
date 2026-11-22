@@ -29,6 +29,8 @@ Opens the file tree and the files you had open last time. Files save themselves.
 - **Git**: status, line blame, file history, a timeline under the tree, change marks at the window edge
 - **Panels**: terminal (`F4`), outline (`F3`), an AI agent on the right (`Space a`)
 - **Debug**: gdb with breakpoints (`F5`, `F9`, `F10`, `F11`)
+- **Images and PDFs**: open like any file; pictures are drawn in the window, PDFs show their text
+  (`pdftotext` is used when installed), and `o` opens the file in the system viewer
 
 Vim's own keys all work. The added ones are grouped under `Space` by topic (`f` find, `g` git,
 `c` code, `t` terminal, `d` debug). **`Space ?` shows every key and `:` command.**
@@ -72,18 +74,18 @@ or a year (undo, sessions) are removed automatically; `:VimzipInfo` shows the si
 
 | | vimzip | VSCode + C/C++ extension |
 |---|---|---|
-| Download | 21 MB | 357 MB |
-| Installed | 74 MB | 1,033 MB |
-| On an SSH server | the same 74 MB | VS Code Server 283 MB + extensions |
+| Download | 22 MB | 357 MB |
+| Installed | 77 MB | 1,033 MB |
+| On an SSH server | the same 77 MB | VS Code Server 283 MB + extensions |
 | Server needs | any x86-64 Linux | glibc 2.28+ |
 
 `vim .` starts in about 0.15 s and uses about 18 MB of memory, about 0.23 s on LLVM (190,000 files).
 
 ## What's inside
 
-vim (static musl build), ripgrep, fzf, universal-ctags, shellcheck, and the plugins ALE, fugitive,
-gitgutter, gv.vim, NERDTree with nerdtree-git-plugin, fzf.vim, gutentags, tagbar, lightline and
-lightline-bufferline.
+vim (static musl build), ripgrep, fzf, universal-ctags, shellcheck, vimzip-view (pictures and PDF
+text, in `tools/`), and the plugins ALE, fugitive, gitgutter, gv.vim, NERDTree with
+nerdtree-git-plugin, fzf.vim, gutentags, tagbar, lightline and lightline-bufferline.
 
 ## Build
 

@@ -417,7 +417,7 @@ let g:gitgutter_enabled = 0
 " ones; the rest are diffed when shown.
 function! s:GitGutterOn() abort
   for b in getbufinfo({'buflisted': 1})
-    call gitgutter#utility#setbufvar(b.bufnr, 'enabled', 1)
+    call gitgutter#utility#setbufvar(b.bufnr, 'enabled', !has_key(b.variables, 'vimzip_view'))
   endfor
   let g:gitgutter_enabled = 1
   call gitgutter#all(1)
@@ -449,7 +449,8 @@ function! s:BlameClear() abort
 endfunction
 function! s:Blame() abort
   call s:BlameClear()
-  if !g:vimzip_blame || &buftype !=# '' || &modified || !filereadable(expand('%:p')) || empty(FugitiveGitDir())
+  if !g:vimzip_blame || &buftype !=# '' || &modified || exists('b:vimzip_view') || !filereadable(expand('%:p'))
+        \ || empty(FugitiveGitDir())
     return
   endif
   if exists('s:blame_job') && job_status(s:blame_job) ==# 'run'
@@ -914,7 +915,8 @@ let s:languages = {'c': 'C', 'cpp': 'C++', 'python': 'Python', 'sh': 'Shell Scri
   \ 'zsh': 'Shell Script', 'make': 'Makefile', 'cmake': 'CMake', 'markdown': 'Markdown', 'vim': 'Vim Script',
   \ 'json': 'JSON', 'yaml': 'YAML', 'javascript': 'JavaScript', 'typescript': 'TypeScript', 'go': 'Go',
   \ 'rust': 'Rust', 'java': 'Java', 'lua': 'Lua', 'html': 'HTML', 'css': 'CSS', 'xml': 'XML', 'sql': 'SQL',
-  \ 'dockerfile': 'Dockerfile', 'gitcommit': 'Git Commit', 'gitignore': 'Ignore', 'text': 'Plain Text'}
+  \ 'dockerfile': 'Dockerfile', 'gitcommit': 'Git Commit', 'gitignore': 'Ignore', 'text': 'Plain Text',
+  \ 'vimzipimage': 'Image', 'vimzippdf': 'PDF'}
 function! VimzipProblems(...) abort
   let b = a:0 ? a:1 : bufnr('')
   if getbufvar(b, '&buftype') !=# '' || !exists('g:loaded_ale') | return '' | endif
@@ -1791,6 +1793,162 @@ augroup vimzip_hover
   autocmd!
   autocmd CursorMoved,TextChanged,WinScrolled,WinEnter * if &filetype ==# 'nerdtree' | call s:TreeHover() | endif
   autocmd WinLeave * call s:TreeHoverClose()
+augroup END
+
+" ─── images and PDFs ─────────────────────────────────────────────────────────────────────────────
+" Opened like any file (tree, Ctrl+p, :e), in a read-only tab: a picture drawn with half blocks,
+" two pixels a cell (bin/vimzip-view), redrawn to fit when the window changes size; a PDF as its
+" text (pdftotext when installed, else vimzip-view), to read, search and copy. o opens the file
+" in the system viewer.
+let s:view = $VIMZIP . '/bin/vimzip-view'
+let s:img_hl = {}  " highlight group: its definition, again after a :colorscheme
+function! s:ViewOpen(buf, kind) abort
+  let b:vimzip_view = a:kind
+  setlocal buftype= noswapfile noundofile undolevels=-1 bufhidden= nomodeline
+  let &l:filetype = 'vimzip' . a:kind
+  silent! call gitgutter#buffer_disable(a:buf)
+  nnoremap <buffer> <silent> o :call <SID>ViewExternal()<CR>
+  call s:ViewFill(a:buf, ['', '  Loading ' . expand('%:t') . ' ...'])
+  if a:kind ==# 'pdf'
+    call s:PdfRead(a:buf)
+  else
+    unlet! b:vimzip_size
+    call s:ImgRender(a:buf)
+  endif
+endfunction
+function! s:ViewFill(buf, lines) abort
+  call setbufvar(a:buf, '&modifiable', 1)
+  silent call deletebufline(a:buf, 1, '$')
+  call setbufline(a:buf, 1, a:lines)
+  call setbufvar(a:buf, '&modifiable', 0)
+  call setbufvar(a:buf, '&modified', 0)
+endfunction
+function! s:ViewHeader(buf, info) abort
+  let f = fnamemodify(bufname(a:buf), ':p')
+  let kb = getfsize(f) / 1024
+  return printf('  %s   %s   %s   o: open in viewer', fnamemodify(f, ':t'), a:info,
+        \ kb >= 1024 ? printf('%.1f MB', kb / 1024.0) : max([kb, 1]) . ' KB')
+endfunction
+" the window's size in cells for the picture, under the header line and a blank one
+function! s:ImgRender(buf) abort
+  let w = bufwinid(a:buf)
+  if w < 0 || getbufvar(a:buf, 'vimzip_view') !=# 'image'
+    return
+  endif
+  let size = [max([4, winwidth(w) - 2]), max([2, winheight(w) - 3])]
+  if getbufvar(a:buf, 'vimzip_size', []) == size
+    return
+  endif
+  call setbufvar(a:buf, 'vimzip_size', size)
+  if !executable(s:view)
+    call s:ViewFill(a:buf, ['', '  vimzip-view is missing from ' . fnamemodify(s:view, ':h') . ': o opens the picture elsewhere'])
+    return
+  endif
+  let out = []
+  let cmd = [s:view, 'image', fnamemodify(bufname(a:buf), ':p'), size[0], size[1]] + (&termguicolors ? [] : ['256'])
+  call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(out, 'error: ' . l)},
+        \ 'close_cb': {_ -> s:ImgShow(a:buf, out, size)}})
+endfunction
+function! s:ImgShow(buf, out, size) abort
+  if !bufexists(a:buf) || getbufvar(a:buf, 'vimzip_size', []) != a:size
+    return  " gone, or resized again while drawing
+  endif
+  if empty(a:out) || a:out[0] =~# '^error: '
+    let msg = empty(a:out) ? 'no output' : substitute(a:out[0], '^error: \(vimzip-view: \)\=', '', '')
+    call s:ViewFill(a:buf, [s:ViewHeader(a:buf, 'cannot be shown'), '', '  ' . msg])
+    return
+  endif
+  let [dims, format] = split(a:out[0] . ' ?')[0 : 1]
+  let lines = [s:ViewHeader(a:buf, format . ' ' . substitute(dims, 'x', ' x ', '')), '']
+  let props = []
+  let gui = &termguicolors
+  for row in a:out[1 :]
+    let runs = map(split(row), 'split(v:val, ":")')
+    let width = eval(join(map(copy(runs), 'v:val[0]'), '+'))
+    let text = repeat(' ', max([0, (a:size[0] - width) / 2]) + 1)
+    for [n, top, bottom] in runs
+      let name = 'VimzipImg_' . top . '_' . bottom
+      if !has_key(s:img_hl, name)
+        let s:img_hl[name] = gui ? printf('guifg=#%s guibg=#%s', top, bottom) : printf('ctermfg=%s ctermbg=%s', top, bottom)
+        execute 'highlight' name s:img_hl[name]
+        call prop_type_add(name, {'highlight': name})
+      endif
+      call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * 3, name])
+      let text .= repeat('▀', str2nr(n))
+    endfor
+    call add(lines, text)
+  endfor
+  call s:ViewFill(a:buf, lines)
+  for [lnum, col, length, name] in props
+    call prop_add(lnum, col, {'length': length, 'type': name, 'bufnr': a:buf})
+  endfor
+endfunction
+function! s:PdfRead(buf) abort
+  let file = fnamemodify(bufname(a:buf), ':p')
+  let cmd = executable('pdftotext') ? ['pdftotext', '-layout', '-enc', 'UTF-8', file, '-'] : [s:view, 'pdf', file]
+  let [out, err] = [[], []]
+  call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(err, l)},
+        \ 'close_cb': {_ -> s:PdfShow(a:buf, out, err, fnamemodify(cmd[0], ':t'))}})
+endfunction
+" pages are separated by form feeds: a line for each new page instead
+function! s:PdfShow(buf, out, err, tool) abort
+  if !bufexists(a:buf)
+    return
+  endif
+  let pages = [[]]
+  for l in a:out
+    let parts = split(l, "\f", 1)
+    call add(pages[-1], parts[0])
+    for p in parts[1 :]
+      call add(pages, p ==# '' ? [] : [p])
+    endfor
+  endfor
+  if len(pages) > 1 && empty(filter(copy(pages[-1]), 'v:val !~# "^\\s*$"'))
+    call remove(pages, -1)  " pdftotext ends the last page with one too
+  endif
+  let lines = [s:ViewHeader(a:buf, len(pages) . (len(pages) == 1 ? ' page' : ' pages') . ', text by ' . a:tool)]
+  if empty(filter(copy(a:out), 'v:val =~# "\\S"'))
+    call extend(lines, ['', '  ' . (empty(a:err) ? 'No text in this PDF (scanned pages are pictures).' : a:err[0])])
+  else
+    for i in range(len(pages))
+      call extend(lines, ['', '── page ' . (i + 1) . ' ' . repeat('─', 60), ''] + pages[i])
+    endfor
+  endif
+  call s:ViewFill(a:buf, lines)
+endfunction
+function! s:ViewExternal() abort
+  let f = expand('%:p')
+  if executable('wslpath') && executable('explorer.exe') && !executable('wslview')
+    let cmd = ['explorer.exe', trim(system('wslpath -w ' . shellescape(f)))]
+  else
+    " (not open: on some Linux systems that is openvt, which starts a console)
+    let cmd = map(filter(['xdg-open', 'wslview'], 'executable(v:val)')[: 0], '[v:val, f]')
+    let cmd = empty(cmd) ? [] : cmd[0]
+  endif
+  if empty(cmd)
+    echohl WarningMsg | echo 'No system viewer here (xdg-open), e.g. over ssh' | echohl None
+    return
+  endif
+  call job_start(cmd, {'stoponexit': '', 'in_io': 'null', 'out_io': 'null', 'err_io': 'null'})
+  echo 'Opened in the system viewer: ' . expand('%:t')
+endfunction
+" no line numbers or cursor line over a picture; redrawn to fit after a resize
+function! s:ViewWindow() abort
+  if exists('b:vimzip_view')
+    setlocal nonumber norelativenumber nocursorline nolist nowrap signcolumn=no colorcolumn= foldcolumn=0
+    call s:ImgRender(bufnr(''))
+  endif
+endfunction
+let s:view_files = '*.{png,PNG,jpg,JPG,jpeg,JPEG,gif,GIF,webp,WEBP,bmp,BMP,tif,TIF,tiff,TIFF}'
+augroup vimzip_view
+  autocmd!
+  execute 'autocmd BufReadCmd' s:view_files 'call s:ViewOpen(str2nr(expand("<abuf>")), "image")'
+  autocmd BufReadCmd *.{pdf,PDF} call s:ViewOpen(str2nr(expand('<abuf>')), 'pdf')
+  " never write the drawing or the text over the file
+  execute 'autocmd BufWriteCmd' s:view_files . ',*.{pdf,PDF} echohl WarningMsg | echo "Read-only view" | echohl None'
+  autocmd BufWinEnter * call s:ViewWindow()
+  autocmd WinResized,VimResized * for s:w in gettabinfo(tabpagenr())[0].windows | call s:ImgRender(winbufnr(s:w)) | endfor
+  autocmd ColorScheme * for [s:n, s:d] in items(s:img_hl) | execute 'highlight' s:n s:d | endfor
 augroup END
 
 " ─── keys ────────────────────────────────────────────────────────────────────────────────────────

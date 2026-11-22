@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     container: alpine:3
     steps:
-      - run: apk add --no-cache build-base coreutils curl git ncurses tar xz zip
+      - run: apk add --no-cache build-base coreutils curl git go ncurses tar xz zip
       - uses: actions/checkout@v7
         with:
           submodules: true

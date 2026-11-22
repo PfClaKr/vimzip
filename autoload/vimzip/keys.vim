@@ -61,7 +61,8 @@ let s:vimzip = [
       \   ['Space ce', 'error on this line in full'],
       \   ['Space cf', 'reindent the file'],
       \   ['Space cl', 'language servers on / off'],
-      \   ['click the right edge', 'jump to that change']]],
+      \   ['click the right edge', 'jump to that change'],
+      \   ['o  (picture, PDF)', 'open in the system viewer']]],
       \ ['Git', [
       \   ['Space gs', 'status window'],
       \   ['Space gc', 'commit of this line'],
