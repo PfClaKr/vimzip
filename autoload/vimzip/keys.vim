@@ -373,10 +373,14 @@ function! s:Filter(id, key) abort
     call popup_setoptions(a:id, {'firstline': s:first})
     return 1
   endif
-  if index(['q', "\<Esc>", '?', "\<CR>", "\<LeftMouse>"], a:key) >= 0
+  if index(['q', 'x', "\<Esc>", '?', "\<CR>", "\<LeftMouse>"], a:key) >= 0
     call popup_close(a:id)
     return 1
   endif
-  " vim's own events (cursor hold, mouse moves) pass; any other key is swallowed
-  return a:key[0] !=# "\x80"
+  " vim's own events (cursor hold, mouse moves) pass; any other key closes the page and does its
+  " usual job (':' starts a command), instead of being swallowed with the page left on the screen
+  if a:key[0] !=# "\x80"
+    call popup_close(a:id)
+  endif
+  return 0
 endfunction
