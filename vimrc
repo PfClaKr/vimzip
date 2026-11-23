@@ -2461,7 +2461,15 @@ nnoremap <silent> gr :call <SID>Refs()<CR>
 nnoremap <silent> K :call <SID>Docs()<CR>
 nmap ]e <Plug>(ale_next_wrap)
 nmap [e <Plug>(ale_previous_wrap)
-nnoremap <silent> <leader>ce :ALEDetail<CR>
+" (on a line without one: a word saying so, not nothing at all)
+function! s:ErrorDetail() abort
+  if exists('*ale#util#FindItemAtCursor') && empty(ale#util#FindItemAtCursor(bufnr(''))[1])
+    echo 'No error or warning on this line'
+  else
+    ALEDetail
+  endif
+endfunction
+nnoremap <silent> <leader>ce :call <SID>ErrorDetail()<CR>
 nnoremap <silent> <leader>cl :Lsp<CR>
 nnoremap <silent> <leader>cf gg=G``
 
