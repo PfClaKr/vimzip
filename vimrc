@@ -41,6 +41,8 @@ set encoding=utf-8 fileencodings=ucs-bom,utf-8,cp949,latin1
 " a file that ends without a newline keeps it so, like VSCode: saved automatically after any edit,
 " it otherwise gained one, a change in git nobody made (.editorconfig's insert_final_newline wins)
 set nofixendofline
+" Ctrl+a on 007 gives 008, not octal 010 (defaults.vim, which -u skips, does the same)
+set nrformats-=octal
 set autoindent smarttab tabstop=4 shiftwidth=4
 " indentation as the file already has it, like VSCode: spaces or tabs, and how many spaces (Tab
 " and >> put tabs into a file indented with two spaces). An .editorconfig still decides (its
