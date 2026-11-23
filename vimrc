@@ -3478,7 +3478,9 @@ function! s:ConflictMarks() abort
   for [start, base, mid, end] in found
     for l in range(start, end)
       let kind = index([start, base, mid, end], l) >= 0 ? 'Mark' : l < (base ? base : mid) ? 'Current' : l > mid ? 'Incoming' : 'Mark'
-      call sign_place(0, 'vimzip_conflict', 'VimzipConflict' . kind, bufnr(''), {'lnum': l, 'priority': 5})
+      " (as high as ALE's marks, which then show too; over git's, which would hide the colors of a
+      " file git tracks, every line of a conflict being a change)
+      call sign_place(0, 'vimzip_conflict', 'VimzipConflict' . kind, bufnr(''), {'lnum': l, 'priority': get(g:, 'ale_sign_priority', 30)})
     endfor
     call prop_add(start, 0, {'type': 'vimzip_conflict', 'text_align': 'above',
           \ 'text': 'Accept Current (Space mc) │ Accept Incoming (Space mi) │ Accept Both (Space mb)'})
@@ -4095,6 +4097,15 @@ function! s:StickyHeads(w) abort
   " (only what is out of view: each head line covers one at the top)
   return filter(heads, 'v:val < top + v:key')
 endfunction
+function! s:Untab(text, ts) abort
+  let parts = split(a:text, '\t', 1)
+  let out = ''
+  for part in parts[: -2]
+    let out .= part
+    let out .= repeat(' ', a:ts - strdisplaywidth(out) % a:ts)
+  endfor
+  return out . parts[-1]
+endfunction
 function! s:Sticky(...) abort
   let w = a:0 ? a:1 : win_getid()
   let b = winbufnr(w)
@@ -4115,7 +4126,9 @@ function! s:Sticky(...) abort
   endif
   let nw = getwinvar(w, '&number') ? max([getwinvar(w, '&numberwidth'), len(line('$', w)) + 1]) : 0
   let sign = getwinvar(w, '&signcolumn') ==# 'no' ? 0 : 2
-  let lines = map(copy(heads), {_, l -> repeat(' ', sign) . (nw ? printf('%*d ', nw - 1, l) : '') . getbufline(b, l)[0]})
+  " (tabs laid out from the text's start, as in the window: after the line number they shifted)
+  let ts = getbufvar(b, '&tabstop')
+  let lines = map(copy(heads), {_, l -> repeat(' ', sign) . (nw ? printf('%*d ', nw - 1, l) : '') . s:Untab(getbufline(b, l)[0], ts)})
   let [row, col] = win_screenpos(w)
   let opts = {'line': row, 'col': col, 'minwidth': winwidth(w) - 1, 'maxwidth': winwidth(w) - 1,
         \ 'highlight': 'VimzipSticky', 'zindex': 40, 'wrap': 0}
