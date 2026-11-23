@@ -846,6 +846,9 @@ endfunction
 augroup vimzip_lsp
   autocmd!
   autocmd FileType * call s:LspOmni(bufnr(''))
+  " (ALE tells a buffer its server started when it is entered again, not quietly: a server that
+  " started while the tree or a list was in front printed "No matching autocommands")
+  autocmd User ALELSPStarted :
 augroup END
 " :Lsp {language} [on|off]: switch a server (no argument: the list); its open files are checked again
 function! s:LspSet(id, ...) abort
@@ -2349,9 +2352,9 @@ function! s:OpenProject(dir) abort
   call lightline#update()
 endfunction
 
-" Space fp: the projects listed in ~/.config/vimzip/projects (added with Ctrl+a, or by editing the
-" file with Ctrl+e: one folder per line, in that order), then the recent ones (folders with a saved
-" session, newest first). Ctrl+x takes one off the list (out of the file, and hidden from the
+" Space fp: the projects listed in ~/.config/vimzip/projects (added with Ctrl+a, typed or picked in
+" a folder tree, or by editing the file with Ctrl+e: one folder per line, in that order), then the
+" recent ones (folders with a saved session, newest first). Ctrl+x takes one off the list (out of the file, and hidden from the
 " recent ones until it is opened again).
 let s:projects_file = expand('~/.config/vimzip/projects')
 let s:projects_hidden = s:cache . '/projects-hidden'
@@ -2374,19 +2377,29 @@ endfunction
 function! s:PickProject() abort
   call fzf#run(fzf#wrap({'source': s:RecentProjects(), 'sink*': function('s:PickedProject'),
         \ 'options': ['--prompt', 'Project> ', '--print-query', '--expect', 'ctrl-a,ctrl-x,ctrl-e',
-        \   '--header', 'Enter open (or a typed path)   Ctrl+a add   Ctrl+x remove   Ctrl+e edit the list',
+        \   '--header', 'Enter open (or a typed path)   Ctrl+a add (a folder tree)   Ctrl+x remove   Ctrl+e edit the list',
         \   '--bind', 'enter:accept-or-print-query']}))
-endfunction
-function! s:Warn(msg) abort
-  echohl WarningMsg | echomsg a:msg | echohl None
 endfunction
 function! s:PickedProject(lines) abort
   let [query, key] = [get(a:lines, 0, ''), get(a:lines, 1, '')]
   let picked = filter(a:lines[2:], 'v:val !=# ""')
-  " a typed folder wins over the entry it happens to match ("~/work/ap" picked ~/work/api): always
-  " for Ctrl+a, for Enter when it is one
+  " a typed folder wins over the entry it happens to match ("~/work/ap" picked ~/work/api)
   let typed = fnamemodify(expand(trim(query)), ':p:s?/$??')
-  if query =~# '\S' && (key ==# 'ctrl-a' || (key ==# '' && query =~# '^\s*[~./]' && isdirectory(typed)))
+  if key ==# 'ctrl-a'
+    if query =~# '\S' && isdirectory(typed)
+      call s:AddProject(typed)
+      call timer_start(0, {-> s:PickProject()})  " the list again, changed
+    else
+      " the folder picked in a tree, from the typed path's nearest folder, or home
+      let start = query =~# '\S' ? typed : expand('~')
+      while !isdirectory(start) && fnamemodify(start, ':h') !=# start
+        let start = fnamemodify(start, ':h')
+      endwhile
+      call timer_start(0, {-> s:FolderTree(start)})
+    endif
+    return
+  endif
+  if key ==# '' && query =~# '^\s*[~./]' && isdirectory(typed)
     let picked = [query]
   endif
   let dirs = map(empty(picked) ? (query ==# '' ? [] : [query]) : picked, 'fnamemodify(expand(trim(v:val)), ":p:s?/$??")')
@@ -2396,24 +2409,12 @@ function! s:PickedProject(lines) abort
     endif
     call s:Buf('edit ' . fnameescape(s:projects_file))
     return
-  elseif key ==# 'ctrl-a' || key ==# 'ctrl-x'
+  elseif key ==# 'ctrl-x'
     let listed = s:ReadList(s:projects_file)
     let hidden = s:ReadList(s:projects_hidden)
     for d in dirs
-      if key ==# 'ctrl-a'
-        if !isdirectory(d)
-          " (after the list's window has closed and the screen is drawn again, or it is not seen)
-          let msg = 'Not a folder: ' . fnamemodify(d, ':~')
-          call timer_start(50, {-> s:Warn(msg)})
-          return
-        endif
-        call filter(listed, 'v:val !=# d')
-        call add(listed, d)
-        call filter(hidden, 'v:val !=# d')
-      else
-        call filter(listed, 'v:val !=# d')
-        call add(hidden, d)
-      endif
+      call filter(listed, 'v:val !=# d')
+      call add(hidden, d)
     endfor
     call s:WriteList(s:projects_file, listed)
     call s:WriteList(s:projects_hidden, uniq(sort(hidden)))
@@ -2428,6 +2429,101 @@ function! s:PickedProject(lines) abort
     endif
     call s:OpenProject(dirs[0])
   endif
+endfunction
+function! s:AddProject(dir) abort
+  call s:WriteList(s:projects_file, filter(s:ReadList(s:projects_file), 'v:val !=# a:dir') + [a:dir])
+  let hidden = s:ReadList(s:projects_hidden)
+  if index(hidden, a:dir) >= 0
+    call s:WriteList(s:projects_hidden, filter(hidden, 'v:val !=# a:dir'))
+  endif
+endfunction
+" the folder tree of Space fp's Ctrl+a: Enter (l, h) opens and closes a folder, a adds the one at
+" the cursor, - goes up from the top folder, . shows hidden folders, Esc goes back to the list
+let s:ftree = {}
+function! s:FolderTree(start) abort
+  let s:ftree = {'root': a:start, 'open': {a:start: 1}, 'hidden': 0, 'rows': []}
+  let s:ftree.id = popup_create([], {'title': ' Add a project: Enter open/close  a add  - up  . hidden  Esc back ',
+        \ 'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'padding': [0, 1, 0, 1],
+        \ 'cursorline': 1, 'mapping': 0, 'filter': function('s:FolderTreeKey'), 'zindex': 300,
+        \ 'minwidth': min([70, &columns - 8]), 'maxwidth': &columns - 8,
+        \ 'minheight': min([20, &lines - 8]), 'maxheight': &lines - 8})
+  call s:FolderTreeDraw(1)
+endfunction
+function! s:FolderTreeDirs(dir) abort
+  let base = a:dir ==# '/' ? '' : a:dir
+  try
+    let names = readdir(a:dir, {n -> (s:ftree.hidden || n[0] !=# '.') && isdirectory(base . '/' . n)})
+  catch  " (a folder it may not read)
+    return []
+  endtry
+  return map(sort(names, 'i'), 'base . "/" . v:val')
+endfunction
+function! s:FolderTreeRows(dir, depth, rows) abort
+  for d in s:FolderTreeDirs(a:dir)
+    call add(a:rows, [d, a:depth])
+    if get(s:ftree.open, d) && len(a:rows) < 5000
+      call s:FolderTreeRows(d, a:depth + 1, a:rows)
+    endif
+  endfor
+endfunction
+function! s:FolderTreeDraw(lnum) abort
+  let rows = [[s:ftree.root, 0]]
+  call s:FolderTreeRows(s:ftree.root, 1, rows)
+  let s:ftree.rows = rows
+  let lines = map(copy(rows), {_, r -> repeat('  ', r[1]) . (get(s:ftree.open, r[0]) ? '▾ ' : '▸ ')
+        \ . (r[1] ? fnamemodify(r[0], ':t') : substitute(fnamemodify(r[0], ':~'), '/$', '', '')) . '/'})
+  call popup_settext(s:ftree.id, lines)
+  call win_execute(s:ftree.id, 'call cursor(' . max([1, min([a:lnum, len(rows)])]) . ', 1)')
+endfunction
+function! s:FolderTreeRow(dir) abort
+  return index(map(copy(s:ftree.rows), 'v:val[0]'), a:dir) + 1
+endfunction
+function! s:FolderTreeKey(id, key) abort
+  let n = line('.', a:id)
+  let dir = s:ftree.rows[n - 1][0]
+  if index(['j', "\<Down>", "\<C-n>", "\<Tab>"], a:key) >= 0
+    call win_execute(a:id, 'normal! j')
+  elseif index(['k', "\<Up>", "\<C-p>", "\<S-Tab>"], a:key) >= 0
+    call win_execute(a:id, 'normal! k')
+  elseif index(['G', "\<End>", "\<PageDown>", "\<C-f>", "\<C-d>"], a:key) >= 0
+    call win_execute(a:id, 'normal! ' . (a:key ==# 'G' || a:key ==# "\<End>" ? 'G' : '10j'))
+  elseif index(['g', "\<Home>", "\<PageUp>", "\<C-b>", "\<C-u>"], a:key) >= 0
+    call win_execute(a:id, 'normal! ' . (a:key ==# 'g' || a:key ==# "\<Home>" ? 'gg' : '10k'))
+  elseif index(["\<CR>", 'o', 'l', "\<Right>"], a:key) >= 0
+    if get(s:ftree.open, dir) && n > 1 && index(["\<CR>", 'o'], a:key) >= 0
+      call remove(s:ftree.open, dir)
+    else
+      let s:ftree.open[dir] = 1
+    endif
+    call s:FolderTreeDraw(n)
+  elseif index(['h', "\<Left>"], a:key) >= 0
+    if get(s:ftree.open, dir) && n > 1
+      call remove(s:ftree.open, dir)
+      call s:FolderTreeDraw(n)
+    elseif n > 1
+      call win_execute(a:id, 'call cursor(' . s:FolderTreeRow(fnamemodify(dir, ':h')) . ', 1)')
+    endif
+  elseif index(['-', "\<BS>", 'u'], a:key) >= 0
+    let up = fnamemodify(s:ftree.root, ':h')
+    if up !=# s:ftree.root
+      let s:ftree.open[up] = 1
+      let s:ftree.root = up
+      call s:FolderTreeDraw(1)
+      call s:FolderTreeDraw(s:FolderTreeRow(dir))
+    endif
+  elseif a:key ==# '.'
+    let s:ftree.hidden = !s:ftree.hidden
+    call s:FolderTreeDraw(1)
+    call s:FolderTreeDraw(max([1, s:FolderTreeRow(dir)]))
+  elseif index(['a', ' ', "\<C-a>"], a:key) >= 0
+    call popup_close(a:id)
+    call s:AddProject(dir)
+    call timer_start(0, {-> s:PickProject()})
+  elseif index(["\<Esc>", 'q', "\<C-c>"], a:key) >= 0
+    call popup_close(a:id)
+    call timer_start(0, {-> s:PickProject()})
+  endif
+  return 1  " (every key is the tree's)
 endfunction
 command! -nargs=? -complete=dir Project if <q-args> ==# '' | call s:PickProject() | else | call s:OpenProject(<q-args>) | endif
 
