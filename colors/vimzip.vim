@@ -62,6 +62,8 @@ highlight! link cppStatement Conditional
 highlight! link pythonClass vimzipType
 highlight! link pythonClassVar Keyword
 highlight! link luaFunction Keyword
+highlight! link luaFunc vimzipFunction
+highlight! link rustModPath vimzipType
 for s:g in ['typescriptVariableDeclaration', 'typescriptIdentifierName', 'typescriptCall',
       \ 'typescriptDestructureVariable', 'typescriptArrowFuncArg', 'typescriptParamImpl']
   execute 'highlight! link' s:g 'vimzipVariable'
