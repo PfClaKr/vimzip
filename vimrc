@@ -175,11 +175,14 @@ function! s:AutoSave() abort
       " this version (OK, then "really write?" confirms) or load the file's (Load); the bare
       " "really write? (y/n)" alone offered no way to get the file's version
       checktime %
+      let s:autosaving = 1
       silent update
     catch
       echohl ErrorMsg
       echomsg (&modified ? 'Not saved: ' : 'Saved, but: ') . substitute(v:exception, '^Vim(\a\+):', '', '')
       echohl None
+    finally
+      let s:autosaving = 0
     endtry
   endif
 endfunction
@@ -268,6 +271,16 @@ function! s:Highlights() abort
     execute 'source' fnameescape(f[0])
   endif
   highlight VimzipTitle ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE
+  highlight! link VimzipBarProblems VimzipBar
+  " several places at once (Ctrl+n), find and replace, merge conflicts
+  highlight VimzipMulti ctermfg=231 ctermbg=24 guifg=#ffffff guibg=#264f78 cterm=NONE gui=NONE
+  highlight VimzipReplaceOld ctermfg=210 ctermbg=52 guifg=#f48771 guibg=#4b1818 cterm=strikethrough gui=strikethrough
+  highlight VimzipReplaceNew ctermfg=114 ctermbg=22 guifg=#9ccc65 guibg=#1f3a1f cterm=NONE gui=NONE
+  highlight link VimzipReplaceHead Title
+  highlight VimzipConflictMark ctermbg=237 guibg=#3c3c3c
+  highlight VimzipConflictCurrent ctermbg=23 guibg=#1e3b33
+  highlight VimzipConflictIncoming ctermbg=17 guibg=#1b2e4b
+  highlight VimzipConflictHint ctermfg=245 guifg=#8a8a8a cterm=italic gui=italic
   " vim fills the cell where two bottom status lines meet with StatusLine(NC): the bar's colors
   " (the two must still differ, or vim draws ^ and = there; nocombine changes nothing visible)
   let id = hlID('VimzipBar')
@@ -1592,8 +1605,9 @@ function! s:Title(w) abort
   let b = winbufnr(a:w)
   let ft = getbufvar(b, '&filetype')
   return ft ==# 'nerdtree' ? 'EXPLORER' : ft ==# 'vimziptimeline' ? 'TIMELINE' : ft ==# 'tagbar' ? 'OUTLINE'
-        \ : getbufvar(b, '&buftype') ==# 'terminal' ? 'TERMINAL'
-        \ : getbufvar(b, '&buftype') ==# 'quickfix' ? (get(getwininfo(a:w)[0], 'loclist') ? 'LOCATION LIST' : 'QUICKFIX')
+        \ : b == get(s:, 'build', -1) ? 'BUILD' : getbufvar(b, '&buftype') ==# 'terminal' ? 'TERMINAL'
+        \ : getbufvar(b, '&buftype') ==# 'quickfix' ? (get(getwininfo(a:w)[0], 'loclist') ? 'LOCATION LIST'
+        \   : get(getqflist({'context': 0}), 'context', '') is# 'vimzip_problems' ? 'PROBLEMS' : 'QUICKFIX')
         \ : getbufvar(b, '&buftype') ==# 'help' ? 'HELP' : ft ==# 'man' ? 'MANUAL'
         \ : (bufname(b) !=# '' ? fnamemodify(bufname(b), ':t') : '[No Name]') . (getbufvar(b, '&modified') ? ' +' : '')
 endfunction
@@ -1657,7 +1671,8 @@ function! VimzipStatus() abort
       " half of a wide character cut off by the window's edge
       if part[0] ==# '' | let part[0] = ' ' | endif
       if get(cells, stop - x + 1, 'x') ==# '' | let part[-1] = ' ' | endif
-      let out .= repeat(' ', start - pos) . '%#' . group . '#' . s:Esc(join(part, '')) . '%#VimzipBar#'
+      let [click, unclick] = group ==# 'VimzipBarProblems' && has('statusline_click') ? ['%[VimzipProblemsClick]', '%[]'] : ['', '']
+      let out .= repeat(' ', start - pos) . click . '%#' . group . '#' . s:Esc(join(part, '')) . '%#VimzipBar#' . unclick
       let pos = stop + 1
     endif
   endfor
@@ -1704,7 +1719,8 @@ function! s:BarLayout() abort
   let x = len(placed[0][1]) + 3
   for item in [exists('*FugitiveHead') ? FugitiveHead(0, b) : '', VimzipProblems(b)]
     if item !=# ''
-      call add(placed, [x, s:BarCells(x, item, joins), 'VimzipBar'])
+      " (E / W opens the problems when clicked)
+      call add(placed, [x, s:BarCells(x, item, joins), item =~# '^E \d' ? 'VimzipBarProblems' : 'VimzipBar'])
       let x += len(placed[-1][1]) + 2
     endif
   endfor
@@ -1963,7 +1979,7 @@ function! s:Kind(n) abort
   let b = winbufnr(a:n)
   let ft = getbufvar(b, '&filetype')
   return ft ==# 'nerdtree' ? 'tree' : ft ==# 'tagbar' ? 'tagbar' : ft ==# 'vimziptimeline' ? 'timeline'
-        \ : b == get(s:, 'ai', -1) ? 'ai' : b == get(s:, 'term', -1) ? 'term' : ''
+        \ : b == get(s:, 'ai', -1) ? 'ai' : b == get(s:, 'term', -1) || b == get(s:, 'build', -1) ? 'term' : ''
 endfunction
 function! s:PanelSize(kind) abort
   let default = {'tree': min([30, max([20, &columns / 4])]), 'tagbar': min([40, max([24, &columns * 3 / 10])]),
@@ -2973,9 +2989,9 @@ endfunction
 nnoremap <silent> <Tab> :call <SID>Buf('bnext')<CR>
 nnoremap <silent> <S-Tab> :call <SID>Buf('bprevious')<CR>
 nnoremap <silent> <leader>q :call <SID>CloseBuf()<CR>
-nnoremap <silent> <C-s> :update<CR>
-inoremap <silent> <C-s> <C-o>:update<CR>
-xnoremap <silent> <C-s> <Esc>:update<CR>
+nnoremap <silent> <C-s> :call <SID>Save()<CR>
+inoremap <silent> <C-s> <C-o>:call <SID>Save()<CR>
+xnoremap <silent> <C-s> <Esc>:call <SID>Save()<CR>
 xnoremap <C-c> y
 
 " panels: Space e explorer, Space o outline, Space a AI agent (and VSCode's keys)
@@ -3054,7 +3070,753 @@ function! s:ErrorDetail() abort
 endfunction
 nnoremap <silent> <leader>ce :call <SID>ErrorDetail()<CR>
 nnoremap <silent> <leader>cl :Lsp<CR>
-nnoremap <silent> <leader>cf gg=G``
+
+" Space cr: rename the symbol at the cursor everywhere (VSCode's F2; vimzip's F2 is the tree): the
+" language server's rename, or without one the word in this file
+function! s:Rename() abort
+  let w = expand('<cword>')
+  if w !~# '^\h\w*$'
+    echo 'No name under the cursor'
+    return
+  endif
+  if s:LspHere()
+    ALERename
+    return
+  endif
+  let new = inputdialog('Rename ' . w . ' in this file (no language server: :Lsp) to: ', w, '')
+  if new ==# '' || new ==# w
+    return
+  endif
+  let view = winsaveview()
+  let n = len(filter(getline(1, '$'), 'v:val =~# ''\V\C\<'' . escape(w, ''\'') . ''\>'''))
+  execute 'keeppatterns %s/\V\C\<' . escape(w, '/\') . '\>/' . escape(new, '/\&~') . '/ge'
+  call winrestview(view)
+  redraw
+  echo printf('Renamed %s to %s on %d line%s', w, new, n, n == 1 ? '' : 's')
+endfunction
+
+" Space cf: format the file (VSCode's Format Document) with the formatter of its language when one
+" is installed, else vim's reindent. Saving (Ctrl+s, :w; not the autosave while typing) formats too
+" where the project asks for it with the formatter's settings file (.clang-format, .prettierrc,
+" rustfmt.toml, [tool.ruff] or [tool.black] in pyproject.toml...), and Go and Zig files always
+" (gofmt / zig fmt being their own style). g:vimzip_format_on_save = 0 never, 1 whenever installed.
+let s:formatters = {'c': ['clang-format'], 'cpp': ['clang-format'], 'objc': ['clang-format'],
+      \ 'cuda': ['clang-format'], 'java': ['google-java-format'], 'python': ['ruff', 'black'],
+      \ 'go': ['gofmt'], 'rust': ['rustfmt'], 'sh': ['shfmt'], 'bash': ['shfmt'], 'lua': ['stylua'],
+      \ 'zig': ['zig'], 'cmake': ['cmake-format'], 'json': ['prettier', 'jq']}
+for s:ft in ['javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'css', 'scss', 'less',
+      \ 'html', 'vue', 'yaml', 'markdown', 'graphql']
+  let s:formatters[s:ft] = ['prettier']
+endfor
+" [program, command for a file] of the first formatter installed for this buffer's language
+function! s:Formatter() abort
+  let file = expand('%:p')
+  let dir = expand('%:p:h')
+  for prog in get(s:formatters, &filetype, [])
+    " (a project's own prettier first)
+    let exe = prog ==# 'prettier' ? findfile('node_modules/.bin/prettier', dir . ';') : ''
+    let exe = exe !=# '' ? fnamemodify(exe, ':p') : exepath(prog)
+    if exe ==# ''
+      continue
+    endif
+    let edition = prog ==# 'rustfmt' ? matchstr(join(readfile(findfile('Cargo.toml', dir . ';') ?? '/dev/null'), "\n"), 'edition\s*=\s*"\zs\d\+') : ''
+    let cmd = {'clang-format': [exe, '--assume-filename=' . file],
+          \ 'google-java-format': [exe, '-'],
+          \ 'ruff': [exe, 'format', '--stdin-filename', file, '-'],
+          \ 'black': [exe, '-q', '--stdin-filename', file, '-'],
+          \ 'gofmt': [exe],
+          \ 'rustfmt': [exe, '--edition', edition !=# '' ? edition : '2021'],
+          \ 'shfmt': [exe] + (&expandtab ? ['-i', string(shiftwidth())] : []),
+          \ 'stylua': [exe, '--stdin-filepath', file, '-'],
+          \ 'zig': [exe, 'fmt', '--stdin'],
+          \ 'cmake-format': [exe, '-'],
+          \ 'prettier': [exe, '--stdin-filepath', file],
+          \ 'jq': [exe, '--indent', string(min([7, max([1, shiftwidth()])])), '.']}[prog]
+    return [prog, cmd]
+  endfor
+  return ['', []]
+endfunction
+" does the project ask for its formatter (a settings file for it above this file)?
+function! s:FormatWanted(prog) abort
+  let want = get(g:, 'vimzip_format_on_save', 'auto')
+  if want isnot# 'auto' || a:prog ==# ''
+    return a:prog !=# '' && want is# 1
+  endif
+  if a:prog ==# 'gofmt' || a:prog ==# 'zig'
+    return 1
+  endif
+  let dir = expand('%:p:h')
+  let files = {'clang-format': ['.clang-format', '_clang-format'], 'ruff': ['ruff.toml', '.ruff.toml'],
+        \ 'rustfmt': ['rustfmt.toml', '.rustfmt.toml'], 'stylua': ['stylua.toml', '.stylua.toml'],
+        \ 'cmake-format': ['.cmake-format', '.cmake-format.py', '.cmake-format.yaml', '.cmake-format.json'],
+        \ 'prettier': ['.prettierrc', '.prettierrc.json', '.prettierrc.yaml', '.prettierrc.yml',
+        \   '.prettierrc.js', '.prettierrc.cjs', '.prettierrc.mjs', '.prettierrc.toml',
+        \   'prettier.config.js', 'prettier.config.cjs', 'prettier.config.mjs']}
+  for f in get(files, a:prog, [])
+    if findfile(f, dir . ';') !=# ''
+      return 1
+    endif
+  endfor
+  " (or a section in the project's own file)
+  let section = {'ruff': '^\[tool\.ruff', 'black': '^\[tool\.black\]', 'prettier': '"prettier"\s*:'}
+  let in = a:prog ==# 'prettier' ? 'package.json' : 'pyproject.toml'
+  let f = has_key(section, a:prog) ? findfile(in, dir . ';') : ''
+  return f !=# '' && match(readfile(f), section[a:prog]) >= 0
+endfunction
+function! s:Format(saving) abort
+  if &buftype !=# '' || !&modifiable || exists('b:vimzip_view')
+    return
+  endif
+  let [prog, cmd] = s:Formatter()
+  if a:saving && !s:FormatWanted(prog)
+    return
+  endif
+  if prog ==# ''
+    let view = winsaveview()
+    silent keepjumps normal! gg=G
+    call winrestview(view)
+    echo 'Reindented' . (has_key(s:formatters, &filetype) ? ' (to format: install ' . join(s:formatters[&filetype], ' or ') . ')' : '')
+    return
+  endif
+  let err = tempname()
+  let lines = getline(1, '$')
+  let out = systemlist(join(map(copy(cmd), 'shellescape(v:val)')) . ' 2>' . shellescape(err), lines)
+  if v:shell_error
+    let msg = filter(readfile(err), 'v:val =~# "\\S"')
+    call delete(err)
+    echohl WarningMsg | echo 'Not formatted (' . prog . '): ' . get(msg, 0, 'exit ' . v:shell_error) | echohl None
+    return
+  endif
+  call delete(err)
+  if out ==# lines
+    if !a:saving | echo 'Formatted (' . prog . '): no change' | endif
+    return
+  endif
+  let view = winsaveview()
+  call setline(1, out)
+  if line('$') > len(out)
+    silent execute 'keepjumps' (len(out) + 1) . ',$delete _'
+  endif
+  call winrestview(view)
+  if !a:saving | echo 'Formatted (' . prog . ')' | endif
+endfunction
+" a save that is not the user's (the autosave, :wall before a build): no formatting
+function! s:QuietWrite(cmd) abort
+  let s:autosaving = 1
+  try
+    execute 'silent!' a:cmd
+  finally
+    let s:autosaving = 0
+  endtry
+endfunction
+augroup vimzip_format
+  autocmd!
+  " (the file being written: :wall writes others too)
+  autocmd BufWritePre * if !get(s:, 'autosaving') && str2nr(expand('<abuf>')) == bufnr('') | call s:Format(1) | endif
+augroup END
+" Ctrl+s also formats a file the autosave has already written
+function! s:Save() abort
+  if !&modified
+    let tick = b:changedtick
+    call s:Format(1)
+    if b:changedtick == tick
+      return
+    endif
+  endif
+  update
+endfunction
+
+" Space ca / Ctrl+.: the language server's quick fixes and refactorings for this place (VSCode's
+" lightbulb), in a menu
+function! s:CodeAction() abort
+  if !s:LspHere()
+    echo 'No quick fixes: they come from a language server (:Lsp)'
+    return
+  endif
+  let s:actions = {'items': [], 'buf': bufnr(''), 'timer': -1}
+  " (asked at the problem on this line where there is one: ALE sends the server the problem, and so
+  " gets its fix, only for a single place, not a word)
+  let item = ale#util#FindItemAtCursor(bufnr(''))[1]
+  if !empty(item)
+    call setpos("'<", [0, item.lnum, max([1, get(item, 'col', 1)]), 0])
+    call setpos("'>", [0, item.lnum, max([1, get(item, 'col', 1)]), 0])
+  endif
+  call ale#codefix#Execute(!empty(item), function('s:CodeActions'))
+endfunction
+function! s:CodeActions(data, items) abort
+  " (several servers or requests answer apart: shown together once they are in)
+  call extend(s:actions.items, map(copy(a:items), '[a:data, v:val[0], v:val[1]]'))
+  call timer_stop(s:actions.timer)
+  let s:actions.timer = timer_start(150, {-> s:CodeActionMenu()})
+endfunction
+function! s:CodeActionMenu() abort
+  if bufnr('') != s:actions.buf
+    return
+  endif
+  let items = filter(s:actions.items, '!empty(v:val[0])')
+  if empty(items)
+    echo 'No quick fixes here'
+    return
+  endif
+  let titles = map(copy(items), {i, v -> printf('%d  %s', i + 1, get(v[2], 'title', get(v[2], 'description', '?')))})
+  call popup_menu(titles, {'title': ' Quick fix  Enter: apply  Esc: close ', 'callback': function('s:CodeActionPicked'),
+        \ 'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'padding': [0, 1, 0, 1],
+        \ 'pos': 'topleft', 'line': 'cursor+1', 'col': 'cursor', 'maxwidth': &columns - 4})
+endfunction
+function! s:CodeActionPicked(id, result) abort
+  if a:result < 1
+    return
+  endif
+  let [data, kind, item] = s:actions.items[a:result - 1]
+  if kind ==# 'tsserver'
+    call ale#codefix#ApplyTSServerCodeAction(data, item)
+  else
+    call ale#codefix#ApplyLSPCodeAction(data, item)
+  endif
+endfunction
+
+" Space cp, or a click on E / W in the status bar: the problems of the open files (ALE's) and of the
+" last build in one list at the bottom (VSCode's Problems panel); it follows new checks while open
+let s:build_problems = []
+function! s:ProblemItems() abort
+  let items = []
+  if exists('g:loaded_ale')
+    for b in getbufinfo({'buflisted': 1, 'bufloaded': 1})
+      for i in ale#engine#GetLoclist(b.bufnr)
+        call add(items, {'bufnr': i.bufnr, 'lnum': i.lnum, 'col': get(i, 'col', 0), 'type': get(i, 'type', 'E'),
+              \ 'text': i.text . (has_key(i, 'code') ? ' [' . i.code . ']' : '')})
+      endfor
+    endfor
+  endif
+  let seen = {}
+  for i in items
+    let seen[i.bufnr . ':' . i.lnum] = 1
+  endfor
+  " (the build's, where the checks did not already say so)
+  for i in s:build_problems
+    if !has_key(seen, get(i, 'bufnr', 0) . ':' . get(i, 'lnum', 0))
+      call add(items, i)
+    endif
+  endfor
+  return sort(items, {a, b -> a.bufnr != b.bufnr ? (bufname(a.bufnr) <# bufname(b.bufnr) ? -1 : 1)
+        \ : a.type !=# b.type ? (a.type ==# 'E' ? -1 : b.type ==# 'E' ? 1 : 0) : a.lnum - b.lnum})
+endfunction
+function! s:ProblemsShown() abort
+  return get(getqflist({'context': 0}), 'context', '') is# 'vimzip_problems'
+endfunction
+function! s:Problems() abort
+  let items = s:ProblemItems()
+  if s:ProblemsShown()
+    call setqflist([], 'r', {'items': items, 'title': 'Problems'})
+  else
+    call setqflist([], ' ', {'items': items, 'title': 'Problems', 'context': 'vimzip_problems'})
+  endif
+  call s:EditWin()
+  let from = win_getid()
+  execute 'botright copen' max([6, min([12, len(items) + 1])])
+  call win_gotoid(from)
+  echo empty(items) ? 'No problems have been found in the open files' : ''
+endfunction
+function! s:ProblemsUpdate() abort
+  if s:ProblemsShown() && getqflist({'winid': 0}).winid
+    let view = getqflist({'idx': 0}).idx
+    call setqflist([], 'r', {'items': s:ProblemItems(), 'title': 'Problems'})
+    call setqflist([], 'r', {'idx': max([1, min([view, getqflist({'size': 0}).size])])})
+  endif
+endfunction
+function! VimzipProblemsClick(info) abort
+  if a:info.button ==# 'l'
+    call s:Problems()
+  endif
+  return 0
+endfunction
+augroup vimzip_problems
+  autocmd!
+  autocmd User ALELintPost call s:ProblemsUpdate()
+augroup END
+
+" Ctrl+Shift+b / Space cb: build the project in a panel at the bottom (VSCode's build task): CMake
+" (into the project's build folder: its compile_commands.json is then the project's own), make,
+" cargo, go, zig or npm's build script; g:vimzip_build sets the command. Its errors join the
+" problems (Space cp, ]q).
+function! s:BuildCommand() abort
+  if get(g:, 'vimzip_build', '') !=# ''
+    return g:vimzip_build
+  endif
+  let made = filter(glob('build*/CMakeCache.txt', 0, 1) + glob('cmake-build-*/CMakeCache.txt', 0, 1), 'filereadable(v:val)')
+  if !empty(made)
+    return 'cmake --build ' . shellescape(fnamemodify(made[0], ':h')) . ' -j'
+  elseif filereadable('CMakeLists.txt')
+    return 'cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && cmake --build build -j'
+  elseif filereadable('Makefile') || filereadable('makefile') || filereadable('GNUmakefile')
+    return 'make -j' . s:jobs
+  elseif filereadable('Cargo.toml')
+    return 'cargo build --message-format short'
+  elseif filereadable('go.mod')
+    return 'go build ./...'
+  elseif filereadable('build.zig')
+    return 'zig build'
+  elseif filereadable('package.json') && match(readfile('package.json'), '"build"\s*:') >= 0
+    return 'npm run build'
+  endif
+  return ''
+endfunction
+function! s:Build() abort
+  let cmd = s:BuildCommand()
+  if cmd ==# ''
+    echo 'Nothing to build here (CMakeLists.txt, Makefile, Cargo.toml, go.mod, build.zig, package.json), or let g:vimzip_build = ''...'''
+    return
+  endif
+  call s:QuietWrite('wall')
+  call s:EditWin()
+  let from = win_getid()
+  let old = get(s:, 'build', -1)
+  if bufwinnr(old) > 0
+    execute bufwinnr(old) . 'wincmd w'
+    enew
+  else
+    execute 'botright' s:PanelSize('term') 'new'
+  endif
+  if bufexists(old)
+    execute 'silent! bwipeout!' old
+  endif
+  let blank = bufnr('')
+  let s:build = term_start([&shell, &shellcmdflag, cmd], {'curwin': 1, 'term_name': 'Build: ' . cmd,
+        \ 'term_kill': 'hup', 'exit_cb': {_, status -> timer_start(100, {-> s:BuildDone(status)})}})
+  if bufexists(blank) && blank != s:build
+    execute 'silent! bwipeout' blank
+  endif
+  setlocal winfixheight nonumber nocursorline signcolumn=no
+  call setbufvar(s:build, '&buflisted', 0)
+  let s:set[win_getid()] = winheight(0)
+  call win_gotoid(from)
+  call s:Layout()
+endfunction
+function! s:BuildDone(status) abort
+  if !bufexists(get(s:, 'build', -1))
+    return
+  endif
+  let lines = getbufline(s:build, 1, '$')
+  let efm = &errorformat
+  " (the kind of each message apart from its text, notes left out, and TypeScript's file(line,col))
+  let &errorformat = '%f:%l:%c: %trror: %m,%f:%l:%c: fatal %trror: %m,%f:%l:%c: %tarning: %m,'
+        \ . '%-G%f:%l:%c: note: %m,%f(%l\,%c): %t%*[^ ] TS%n: %m,' . &errorformat
+  let qf = getqflist({'lines': lines, 'efm': &errorformat}).items
+  let &errorformat = efm
+  let s:build_problems = map(filter(qf, 'v:val.valid && v:val.bufnr'), 'extend(v:val, {"type": v:val.type ==# "" ? "E" : toupper(v:val.type)})')
+  let errors = len(filter(copy(s:build_problems), 'v:val.type ==# "E"'))
+  call s:ProblemsUpdate()
+  if a:status == 0
+    echo 'Build succeeded' . (empty(s:build_problems) ? '' : printf(' (%d warnings: Space cp)', len(s:build_problems)))
+  else
+    echohl WarningMsg
+    echo 'Build failed' . (empty(s:build_problems) ? '' : printf(': %d errors, %d warnings (Space cp lists them)', errors, len(s:build_problems) - errors))
+    echohl None
+  endif
+endfunction
+
+" merge conflicts (<<<<<<< ... ======= ... >>>>>>>): colored as VSCode does, with the choices above
+" each one; Space mc keeps the current change, Space mi the incoming one, Space mb both, ]x / [x go
+" to the next / previous conflict
+call sign_define('VimzipConflictMark', {'linehl': 'VimzipConflictMark'})
+call sign_define('VimzipConflictCurrent', {'linehl': 'VimzipConflictCurrent'})
+call sign_define('VimzipConflictIncoming', {'linehl': 'VimzipConflictIncoming'})
+silent! call prop_type_add('vimzip_conflict', {'highlight': 'VimzipConflictHint'})
+" [start, base (or 0), middle, end] of each conflict
+function! s:Conflicts() abort
+  let found = []
+  let [start, base, mid] = [0, 0, 0]
+  let lnum = 0
+  for l in getline(1, '$')
+    let lnum += 1
+    if l =~# '^<<<<<<<\( \|$\)'
+      let [start, base, mid] = [lnum, 0, 0]
+    elseif start && l =~# '^|||||||\( \|$\)'
+      let base = lnum
+    elseif start && l =~# '^=======$'
+      let mid = lnum
+    elseif start && mid && l =~# '^>>>>>>>\( \|$\)'
+      call add(found, [start, base, mid, lnum])
+      let start = 0
+    endif
+  endfor
+  return found
+endfunction
+function! s:ConflictMarks() abort
+  if &buftype !=# '' || (!get(b:, 'vimzip_conflicts') && search('^<<<<<<<\( \|$\)', 'nw') == 0)
+    return
+  endif
+  call sign_unplace('vimzip_conflict', {'buffer': bufnr('')})
+  call prop_remove({'type': 'vimzip_conflict', 'all': 1})
+  let found = s:Conflicts()
+  let b:vimzip_conflicts = !empty(found)
+  for [start, base, mid, end] in found
+    for l in range(start, end)
+      let kind = index([start, base, mid, end], l) >= 0 ? 'Mark' : l < (base ? base : mid) ? 'Current' : l > mid ? 'Incoming' : 'Mark'
+      call sign_place(0, 'vimzip_conflict', 'VimzipConflict' . kind, bufnr(''), {'lnum': l, 'priority': 5})
+    endfor
+    call prop_add(start, 0, {'type': 'vimzip_conflict', 'text_align': 'above',
+          \ 'text': 'Accept Current (Space mc) │ Accept Incoming (Space mi) │ Accept Both (Space mb)'})
+  endfor
+endfunction
+function! s:Resolve(which) abort
+  let at = filter(s:Conflicts(), 'v:val[0] <= line(".") && line(".") <= v:val[3]')
+  if empty(at)
+    echo 'No merge conflict at the cursor (]x goes to the next one)'
+    return
+  endif
+  let [start, base, mid, end] = at[0]
+  let current = getline(start + 1, (base ? base : mid) - 1)
+  let incoming = getline(mid + 1, end - 1)
+  let keep = a:which ==# 'current' ? current : a:which ==# 'incoming' ? incoming : current + incoming
+  silent execute 'keepjumps' start . ',' . end . 'delete _'
+  call append(start - 1, keep)
+  call cursor(start, 1)
+  call s:ConflictMarks()
+endfunction
+function! s:NextConflict(back) abort
+  if !search('^<<<<<<<\( \|$\)', a:back ? 'bsw' : 'sw')
+    echo 'No merge conflicts in this file'
+  endif
+endfunction
+augroup vimzip_conflicts
+  autocmd!
+  autocmd BufWinEnter,BufWritePost,TextChanged,InsertLeave * call s:ConflictMarks()
+augroup END
+
+" several places at once (VSCode's Ctrl+d; vim's Ctrl+d stays half a page down): Ctrl+n on a word
+" (or with a selection) picks it, each Ctrl+n more the next one (Ctrl+p one fewer, Ctrl+a all in
+" the file); then c retypes them all at once, i / a type before / after each, d deletes them, and
+" Esc stops
+let s:multi = {}
+let s:multi_keys = ['<C-p>', '<C-a>', 'c', 's', 'i', 'a', 'd', 'x', '<Esc>']
+function! s:MultiOn() abort
+  return !empty(s:multi) && s:multi.buf == bufnr('')
+endfunction
+function! s:MultiStart(text, word) abort
+  call s:MultiStop()
+  if a:text ==# '' || a:text =~# '\n'
+    echo 'Ctrl+n: on a word, or with a selection on one line'
+    return
+  endif
+  let s:multi = {'buf': bufnr(''), 'text': a:text, 'win': win_getid(), 'match': -1, 'pos': [],
+        \ 'pat': '\V\C' . (a:word ? '\<' : '') . escape(a:text, '\') . (a:word ? '\>' : '')}
+  for k in s:multi_keys
+    execute 'nnoremap <buffer> <nowait> <silent>' k ':<C-u>call <SID>MultiKey("' . substitute(k, '<', '<lt>', 'g') . '")<CR>'
+  endfor
+  augroup vimzip_multi
+    autocmd!
+    autocmd BufLeave,WinLeave * call s:MultiStop()
+  augroup END
+endfunction
+function! s:MultiStop() abort
+  if empty(s:multi)
+    return
+  endif
+  silent! call matchdelete(s:multi.match, s:multi.win)
+  for k in s:multi_keys
+    if bufnr('') == s:multi.buf
+      execute 'silent! nunmap <buffer>' k
+    elseif bufwinid(s:multi.buf) > 0
+      silent! call win_execute(bufwinid(s:multi.buf), 'nunmap <buffer> ' . k)
+    endif
+  endfor
+  silent! autocmd! vimzip_multi
+  let s:multi = {}
+endfunction
+function! s:MultiShow() abort
+  silent! call matchdelete(s:multi.match, s:multi.win)
+  let s:multi.match = matchaddpos('VimzipMulti', map(copy(s:multi.pos), '[v:val[0], v:val[1], len(s:multi.text)]'), 20)
+  let n = len(s:multi.pos)
+  let msg = printf('%d selected   Ctrl+n next  Ctrl+p back  Ctrl+a all   c change  i/a type before/after  d delete  Esc stop', n)
+  echo msg[: &columns - 13]
+endfunction
+" the next place after the last one picked (from the top again at the end)
+function! s:MultiNext() abort
+  let last = s:multi.pos[-1]
+  call cursor(last[0], last[1])
+  let n = len(s:multi.pos)
+  for _ in range(n + 1)
+    let p = searchpos(s:multi.pat, 'w')
+    if p == [0, 0]
+      break
+    endif
+    if index(s:multi.pos, p) < 0
+      call add(s:multi.pos, p)
+      return
+    endif
+  endfor
+  call cursor(last[0], last[1])
+  echo 'All ' . n . ' are picked'
+endfunction
+function! s:MultiAdd(visual) abort
+  if &buftype !=# '' || !&modifiable
+    return
+  endif
+  if !s:MultiOn()
+    if a:visual
+      let text = s:Selection()
+      let start = getpos("'<")[1 : 2]
+      call s:MultiStart(text, 0)
+    else
+      let text = expand('<cword>')
+      call s:MultiStart(text, text =~# '^\k\+$')
+      if empty(s:multi)
+        return
+      endif
+      " (the word under the cursor, from its start)
+      call search(s:multi.pat, 'bcW', line('.'))
+      let start = getpos('.')[1 : 2]
+      if strpart(getline(start[0]), start[1] - 1, len(text)) !=# text
+        let start = searchpos(s:multi.pat, 'cW')
+      endif
+    endif
+    if empty(s:multi)
+      return
+    endif
+    call add(s:multi.pos, start)
+    call cursor(start[0], start[1])
+  else
+    call s:MultiNext()
+  endif
+  call s:MultiShow()
+endfunction
+function! s:MultiKey(key) abort
+  if !s:MultiOn()
+    return
+  endif
+  let k = a:key
+  if k ==# '<Esc>'
+    call s:MultiStop()
+    echo ''
+  elseif k ==# '<C-p>'
+    if len(s:multi.pos) > 1
+      call remove(s:multi.pos, -1)
+      call cursor(s:multi.pos[-1][0], s:multi.pos[-1][1])
+      call s:MultiShow()
+    else
+      call s:MultiStop()
+      echo ''
+    endif
+  elseif k ==# '<C-a>'
+    let view = winsaveview()
+    call cursor(1, 1)
+    let p = searchpos(s:multi.pat, 'cW')
+    while p != [0, 0] && len(s:multi.pos) < 10000
+      if index(s:multi.pos, p) < 0
+        call add(s:multi.pos, p)
+      endif
+      let p = searchpos(s:multi.pat, 'W')
+    endwhile
+    call winrestview(view)
+    call s:MultiShow()
+  else
+    call s:MultiEdit(k ==# 's' ? 'c' : k ==# 'x' ? 'd' : k)
+  endif
+endfunction
+function! s:MultiEdit(op) abort
+  let [text, len] = [s:multi.text, len(s:multi.text)]
+  " (still there: the file may have changed since they were picked)
+  let pos = filter(copy(s:multi.pos), 'strpart(getline(v:val[0]), v:val[1] - 1, len) ==# text')
+  call sort(pos, {a, b -> a[0] != b[0] ? a[0] - b[0] : a[1] - b[1]})
+  if empty(pos)
+    call s:MultiStop()
+    return
+  endif
+  if a:op ==# 'd'
+    for [l, c] in reverse(copy(pos))
+      let t = getline(l)
+      call setline(l, strpart(t, 0, c - 1) . strpart(t, c - 1 + len))
+    endfor
+    call cursor(pos[0][0], pos[0][1])
+    call s:MultiStop()
+    echo 'Deleted ' . len(pos)
+    return
+  endif
+  let [l, c] = pos[0]
+  let t = getline(l)
+  let col = a:op ==# 'a' ? c + len : c
+  " (the line once the first is retyped: vim's own c deletes it, in the same undo step as the typing)
+  let line = a:op ==# 'c' ? strpart(t, 0, c - 1) . strpart(t, c - 1 + len) : t
+  let edit = {'op': a:op, 'pos': pos, 'lnum': l, 'col': col, 'line': line, 'len': len, 'lines': line('$')}
+  call s:MultiStop()
+  let s:multi_edit = edit
+  augroup vimzip_multi_edit
+    autocmd!
+    autocmd InsertLeave * ++once call s:MultiApply()
+  augroup END
+  call cursor(l, col)
+  if a:op ==# 'c'
+    call feedkeys('"_c' . strchars(text) . 'l', 'n')
+  elseif col > len(t)
+    startinsert!
+  else
+    startinsert
+  endif
+endfunction
+" after typing in the first place: the same text in the others
+function! s:MultiApply() abort
+  let e = s:multi_edit
+  unlet s:multi_edit
+  let now = getline(e.lnum)
+  let added = len(now) - len(e.line)
+  if line('.') != e.lnum || line('$') != e.lines || added < 0
+        \ || strpart(now, 0, e.col - 1) !=# strpart(e.line, 0, e.col - 1)
+        \ || strpart(now, e.col - 1 + added) !=# strpart(e.line, e.col - 1)
+    echo 'Changed only the first place (the others take what is typed on that line, in one go)'
+    return
+  endif
+  let typed = strpart(now, e.col - 1, added)
+  let first = e.pos[0]
+  " bottom to top, right to left: the places not done yet keep their columns
+  for [l, c] in reverse(e.pos[1 :])
+    if l == first[0]
+      let c += added - (e.op ==# 'c' ? e.len : 0)
+    endif
+    let t = getline(l)
+    let at = e.op ==# 'a' ? c - 1 + e.len : c - 1
+    let new = strpart(t, 0, at) . typed . strpart(t, e.op ==# 'c' ? at + e.len : at)
+    undojoin | call setline(l, new)
+  endfor
+  echo 'Changed ' . len(e.pos) . ' places'
+endfunction
+
+" find and replace in the project (VSCode's Ctrl+Shift+h): the text (the selection or the word under
+" the cursor to start with) and its replacement, then every change listed in a window to check:
+" dd leaves one out, Enter makes them all, q cancels. The text is found as typed (not a pattern)
+" and in the files the search shows; :cdo s/a/b/ is there for patterns.
+silent! call prop_type_add('vimzip_replace_old', {'highlight': 'VimzipReplaceOld'})
+silent! call prop_type_add('vimzip_replace_new', {'highlight': 'VimzipReplaceNew'})
+function! s:Replace(text) abort
+  " (inputdialog(): Esc gives its third argument, telling a cancel from an empty answer)
+  let find = inputdialog('Replace in the project: ', a:text, "\x01")
+  if find ==# "\x01" || find ==# ''
+    return
+  endif
+  let with = inputdialog('Replace "' . find . '" with: ', find, "\x01")
+  if with ==# "\x01"
+    return
+  endif
+  redraw
+  call s:QuietWrite('wall')
+  let out = systemlist('rg -n -H --no-heading --color=never --fixed-strings --case-sensitive --max-columns=500 -- '
+        \ . shellescape(find) . ' .')
+  let matches = []
+  for l in out
+    let m = matchlist(l, '^\(.\{-}\):\(\d\+\):\(.*\)$')
+    if !empty(m) && stridx(m[3], find) >= 0
+      call add(matches, [substitute(m[1], '^\./', '', ''), str2nr(m[2]), m[3]])
+    endif
+  endfor
+  if empty(matches)
+    echo 'Not found: ' . find
+    return
+  endif
+  call s:EditWin()
+  execute 'botright' max([8, min([&lines / 2, len(matches) + 2])]) 'new'
+  setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted nowrap nonumber nocursorline signcolumn=no
+  setlocal filetype=vimzipreplace
+  silent file [Replace]
+  let b:vimzip_replace = {'find': find, 'with': with}
+  let files = len(uniq(sort(map(copy(matches), 'v:val[0]'))))
+  call setline(1, printf('Replace "%s" with "%s": %d lines in %d files.  Enter: replace  dd: leave one out  q: cancel',
+        \ find, with, len(matches), files))
+  let n = 1
+  for [f, l, t] in matches
+    let n += 1
+    let head = f . ':' . l . ': '
+    " the line as it will be: each match shown crossed out, followed by its replacement
+    let parts = split(t, '\V' . escape(find, '\'), 1)
+    let shown = head . parts[0]
+    let props = []
+    for p in parts[1 :]
+      call add(props, [len(shown) + 1, len(find), 'vimzip_replace_old'])
+      let shown .= find
+      call add(props, [len(shown) + 1, len(with), 'vimzip_replace_new'])
+      let shown .= with . p
+    endfor
+    call setline(n, shown)
+    for [col, length, type] in props
+      if length
+        call prop_add(n, col, {'length': length, 'type': type})
+      endif
+    endfor
+  endfor
+  call matchadd('VimzipReplaceHead', '\%1l.*')
+  call matchadd('Directory', '^\%>1l[^:]\+:\d\+:')
+  setlocal nomodified
+  call cursor(2, 1)
+  nnoremap <buffer> <silent> <CR> :call <SID>ReplaceApply()<CR>
+  nnoremap <buffer> <silent> q :close<CR>
+  nnoremap <buffer> <silent> <Esc> :close<CR>
+endfunction
+function! s:ReplaceApply() abort
+  let [find, with] = [b:vimzip_replace.find, b:vimzip_replace.with]
+  let todo = {}
+  for l in getline(2, '$')
+    let m = matchlist(l, '^\(.\{-}\):\(\d\+\): ')
+    if !empty(m)
+      let todo[m[1]] = add(get(todo, m[1], []), str2nr(m[2]))
+    endif
+  endfor
+  close
+  let pat = '\V\C' . escape(find, '\')
+  let rep = escape(with, '\&~')
+  let [done, files] = [0, 0]
+  for [f, lnums] in items(todo)
+    let path = fnamemodify(f, ':p')
+    let b = bufnr(path)
+    let before = done
+    if b > 0 && bufloaded(b) && (getbufvar(b, '&modified') || bufwinid(b) > 0)
+      " an open file: changed in vim (undo works), and saved
+      for l in lnums
+        let t = get(getbufline(b, l), 0, '')
+        let done += len(split(t, pat, 1)) - 1
+        call setbufline(b, l, substitute(t, pat, rep, 'g'))
+      endfor
+      if bufwinid(b) > 0
+        call win_execute(bufwinid(b), 'call s:QuietWrite("update")')
+      endif
+    else
+      " the others on disk (as they are: line endings and encoding kept), then read again if loaded
+      let lines = readfile(path, 'b')
+      for l in lnums
+        if l <= len(lines)
+          let done += len(split(lines[l - 1], pat, 1)) - 1
+          let lines[l - 1] = substitute(lines[l - 1], pat, rep, 'g')
+        endif
+      endfor
+      if writefile(lines, path, 'b') != 0
+        echohl ErrorMsg | echomsg 'Could not write ' . f | echohl None
+        continue
+      endif
+      if b > 0 && bufloaded(b)
+        execute 'checktime' b
+      endif
+    endif
+    let files += done > before
+  endfor
+  echo printf('Replaced %d in %d file%s', done, files, files == 1 ? '' : 's')
+endfunction
+
+nnoremap <silent> <leader>cr :call <SID>Rename()<CR>
+nnoremap <silent> <leader>cf :call <SID>Format(0)<CR>
+nnoremap <silent> <leader>ca :call <SID>CodeAction()<CR>
+nnoremap <silent> <C-.> :call <SID>CodeAction()<CR>
+nnoremap <silent> <leader>cp :call <SID>Problems()<CR>
+nnoremap <silent> <leader>cb :call <SID>Build()<CR>
+nnoremap <silent> <C-S-b> :call <SID>Build()<CR>
+nnoremap <silent> <leader>fc :call <SID>Replace(expand('<cword>'))<CR>
+xnoremap <silent> <leader>fc <Esc>:call <SID>Replace(<SID>Selection())<CR>
+nnoremap <silent> <C-S-h> :call <SID>Replace(expand('<cword>'))<CR>
+xnoremap <silent> <C-S-h> <Esc>:call <SID>Replace(<SID>Selection())<CR>
+nnoremap <silent> <C-n> :<C-u>call <SID>MultiAdd(0)<CR>
+xnoremap <silent> <C-n> <Esc>:call <SID>MultiAdd(1)<CR>
+nnoremap <silent> <leader>mc :call <SID>Resolve('current')<CR>
+nnoremap <silent> <leader>mi :call <SID>Resolve('incoming')<CR>
+nnoremap <silent> <leader>mb :call <SID>Resolve('both')<CR>
+nnoremap <silent> ]x :call <SID>NextConflict(0)<CR>
+nnoremap <silent> [x :call <SID>NextConflict(1)<CR>
 
 " git: Space g; ]c / [c move between changes (vim's keys for that in a diff)
 " outside a git repository: one line saying so (Space gd stopped at a press-ENTER error)
@@ -3113,7 +3875,7 @@ nmap <silent> <expr> [c &diff ? '[c' : '<Plug>(GitGutterPrevHunk)'
 nnoremap <silent> <leader>? :call vimzip#keys#show()<CR>
 
 " the same keys while typing or selecting (unmapped, vim would type "<F4>" into the file)
-for s:k in ['<F2>', '<F3>', '<F4>', '<F5>', '<F10>', '<F11>', '<F12>', '<C-S-f>', '<C-S-e>', '<C-M-i>']
+for s:k in ['<F2>', '<F3>', '<F4>', '<F5>', '<F10>', '<F11>', '<F12>', '<C-S-f>', '<C-S-e>', '<C-M-i>', '<C-S-b>', '<C-.>']
   execute 'imap <silent>' s:k '<Esc>' . s:k
   if s:k !=# '<C-S-f>'
     execute 'xmap <silent>' s:k '<Esc>' . s:k
@@ -3127,6 +3889,8 @@ tnoremap <silent> <C-S-f> <C-w>:call <SID>Buf('Find')<CR>
 for s:m in ['n', 'x', 'i', 't']
   execute s:m . 'noremap <C-f> <C-f>'
   execute s:m . 'noremap <C-e> <C-e>'
+  execute s:m . 'noremap <C-b> <C-b>'
+  execute s:m . 'noremap <C-h> ' . (s:m ==# 'n' ? '<C-w>h' : '<C-h>')
 endfor
 " ─── debugger ────────────────────────────────────────────────────────────────────────────────────
 " debugger (termdebug): F5 start/continue, F9 breakpoint, F10 over, F11 step
