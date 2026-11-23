@@ -50,6 +50,9 @@ On a small machine (under 2 CPUs or 1 GB of free memory, container limits includ
 light: less work in the background, line blame off until `Space gb`. `:VimzipInfo` shows what it
 found; `let g:vimzip_lite = 0` (or `1`) decides for it.
 
+`Space fp` lists your projects: the ones you added (`Ctrl+a` adds the typed folder, `Ctrl+e` edits
+the list, `~/.config/vimzip/projects`), then the recently opened ones; `Ctrl+x` takes one off.
+
 `:Theme` lists the status bar themes and `:Theme nord` tries one. Code is colored like VSCode's
 Dark+ (functions, variables, types and constants apart); `colorscheme habamax` (or any other) in
 the vimrc gives vim's own look.

@@ -13,6 +13,8 @@ let s:vimzip = [
       \   ['Space fb  Space fr', 'open files / recent files'],
       \   ['Space ft', 'function or struct by name'],
       \   ['Space fp', 'open another project'],
+      \   ['', 'Ctrl+a add, Ctrl+x remove'],
+      \   ['', 'Ctrl+e edit the list'],
       \   ['>', 'in the search window'],
       \   ['Enter', 'open'],
       \   ['Ctrl+v  Ctrl+x', 'open beside / below'],

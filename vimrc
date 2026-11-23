@@ -2196,17 +2196,74 @@ function! s:OpenProject(dir) abort
   call lightline#update()
 endfunction
 
-" recent projects = folders that have a saved session, newest first
+" Space fp: the projects listed in ~/.config/vimzip/projects (added with Ctrl+a, or by editing the
+" file with Ctrl+e: one folder per line, in that order), then the recent ones (folders with a saved
+" session, newest first). Ctrl+x takes one off the list (out of the file, and hidden from the
+" recent ones until it is opened again).
+let s:projects_file = expand('~/.config/vimzip/projects')
+let s:projects_hidden = s:cache . '/projects-hidden'
+function! s:ReadList(file) abort
+  return filereadable(a:file) ? map(filter(readfile(a:file), 'v:val !~# "^\\s*\\(#\\|$\\)"'), 'fnamemodify(expand(trim(v:val)), ":p:s?/$??")') : []
+endfunction
+function! s:WriteList(file, dirs) abort
+  call mkdir(fnamemodify(a:file, ':h'), 'p')
+  let head = a:file ==# s:projects_file ? ['# vimzip projects (Space fp): one folder per line, listed first in this order'] : []
+  call writefile(head + map(copy(a:dirs), 'fnamemodify(v:val, ":~")'), a:file)
+endfunction
 function! s:RecentProjects() abort
+  let listed = s:ReadList(s:projects_file)
+  let hidden = s:ReadList(s:projects_hidden)
   let files = glob(s:cache . '/sessions/*.vim', 0, 1)
   call sort(files, {a, b -> getftime(b) - getftime(a)})
-  let dirs = map(files, {_, f -> s:SessionDir(f)})
-  return map(filter(dirs, {_, d -> isdirectory(d) && d !=# getcwd()}), {_, d -> fnamemodify(d, ':~')})
+  let recent = filter(map(files, {_, f -> s:SessionDir(f)}), {_, d -> index(listed, d) < 0 && index(hidden, d) < 0})
+  return map(filter(listed + recent, {_, d -> isdirectory(d) && d !=# getcwd()}), {_, d -> fnamemodify(d, ':~')})
 endfunction
 function! s:PickProject() abort
-  call fzf#run(fzf#wrap({'source': s:RecentProjects(), 'sink': function('s:OpenProject'),
-        \ 'options': ['--prompt', 'Project> ', '--header', 'recent projects (or type a path)',
-        \             '--bind', 'enter:accept-or-print-query']}))
+  call fzf#run(fzf#wrap({'source': s:RecentProjects(), 'sink*': function('s:PickedProject'),
+        \ 'options': ['--prompt', 'Project> ', '--print-query', '--expect', 'ctrl-a,ctrl-x,ctrl-e',
+        \   '--header', 'Enter open (or a typed path)   Ctrl+a add   Ctrl+x remove   Ctrl+e edit the list',
+        \   '--bind', 'enter:accept-or-print-query']}))
+endfunction
+function! s:PickedProject(lines) abort
+  let [query, key] = [get(a:lines, 0, ''), get(a:lines, 1, '')]
+  let picked = filter(a:lines[2:], 'v:val !=# ""')
+  let dirs = map(empty(picked) ? (query ==# '' ? [] : [query]) : picked, 'fnamemodify(expand(trim(v:val)), ":p:s?/$??")')
+  if key ==# 'ctrl-e'
+    if !filereadable(s:projects_file)
+      call s:WriteList(s:projects_file, [])
+    endif
+    call s:Buf('edit ' . fnameescape(s:projects_file))
+    return
+  elseif key ==# 'ctrl-a' || key ==# 'ctrl-x'
+    let listed = s:ReadList(s:projects_file)
+    let hidden = s:ReadList(s:projects_hidden)
+    for d in dirs
+      if key ==# 'ctrl-a'
+        if !isdirectory(d)
+          echohl WarningMsg | echo 'Not a folder: ' . fnamemodify(d, ':~') | echohl None
+          return
+        endif
+        call filter(listed, 'v:val !=# d')
+        call add(listed, d)
+        call filter(hidden, 'v:val !=# d')
+      else
+        call filter(listed, 'v:val !=# d')
+        call add(hidden, d)
+      endif
+    endfor
+    call s:WriteList(s:projects_file, listed)
+    call s:WriteList(s:projects_hidden, uniq(sort(hidden)))
+    call timer_start(0, {-> s:PickProject()})  " the list again, changed
+    return
+  endif
+  if !empty(dirs)
+    " (opened again: no longer hidden)
+    let hidden = s:ReadList(s:projects_hidden)
+    if index(hidden, dirs[0]) >= 0
+      call s:WriteList(s:projects_hidden, filter(hidden, 'v:val !=# dirs[0]'))
+    endif
+    call s:OpenProject(dirs[0])
+  endif
 endfunction
 command! -nargs=? -complete=dir Project if <q-args> ==# '' | call s:PickProject() | else | call s:OpenProject(<q-args>) | endif
 
