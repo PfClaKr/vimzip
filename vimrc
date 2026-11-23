@@ -1944,14 +1944,20 @@ endfunction
 
 function! s:Save() abort
   if !exists('s:session') | return | endif
-  silent! NERDTreeClose
-  silent! diffoff!
-  for w in reverse(range(1, winnr('$')))
-    " panels and git's views of a file (diffs, old versions) are not part of the session
-    if winnr('$') > 1 && (getwinvar(w, '&buftype') !=# '' || bufname(winbufnr(w)) =~# '^\a\+://')
-      execute w . 'close'
-    endif
+  " in every tab page (:tabnew): another one's terminal came back as an empty buffer
+  let here = tabpagenr()
+  for t in range(1, tabpagenr('$'))
+    execute 'noautocmd tabnext' t
+    silent! NERDTreeClose
+    silent! diffoff!
+    for w in reverse(range(1, winnr('$')))
+      " panels and git's views of a file (diffs, old versions) are not part of the session
+      if winnr('$') > 1 && (getwinvar(w, '&buftype') !=# '' || bufname(winbufnr(w)) =~# '^\a\+://')
+        execute w . 'close'
+      endif
+    endfor
   endfor
+  execute 'noautocmd tabnext' here
   execute 'mksession!' fnameescape(s:session)
 endfunction
 
