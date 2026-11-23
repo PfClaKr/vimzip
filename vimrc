@@ -669,7 +669,17 @@ endfunction
 " the file an #include names: next to this one, in the project's include folders, then where the
 " compiler looks (its list asked once)
 function! s:IncludeFile(name) abort
-  let dirs = [expand('%:p:h'), expand('%:p:h:h') . '/include', getcwd(), getcwd() . '/include']
+  " (the folders the build gives this file, CMake's included: headers deeper in the project)
+  let args = exists('*ale#c#GetCFlags') ? split(ale#c#GetCFlags(bufnr(''), [])) : []
+  let flags = []
+  for i in range(len(args))
+    let d = matchstr(args[i], '^-\%(I\|isystem\|iquote\)\zs.*')
+    let d = d ==# '' && args[i] =~# '^-\%(I\|isystem\|iquote\)$' ? get(args, i + 1, '') : d
+    if d !=# ''
+      call add(flags, substitute(d, '^[''"]\(.*\)[''"]$', '\1', ''))
+    endif
+  endfor
+  let dirs = [expand('%:p:h')] + flags + [expand('%:p:h:h') . '/include', getcwd(), getcwd() . '/include']
   let lang = &filetype ==# 'cpp' ? 'c++' : 'c'
   if !has_key(get(s:, 'sys_include', {}), lang)
     let s:sys_include = get(s:, 'sys_include', {})
