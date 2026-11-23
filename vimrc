@@ -621,6 +621,14 @@ function! s:HeaderEntries(root, json) abort
     call writefile([json_encode(db)], a:json)
   endif
 endfunction
+" (again for a project vimzip configured, not one with a compile_commands.json of its own)
+function! s:CMakeSaved(file) abort
+  let root = s:CMakeRoot(a:file)
+  let dir = s:cache . '/cmake/' . s:CacheName(root, '')
+  if root !=# '' && get(g:, 'vimzip_cmake', 1) && filereadable(dir . '/CMakeCache.txt')
+    call s:CMakeConfigure(root, dir)
+  endif
+endfunction
 function! s:CMakeHere() abort
   let root = s:CMakeRoot(expand('%:p'))
   if root ==# ''
@@ -657,8 +665,7 @@ augroup vimzip_cmake
   autocmd!
   autocmd FileType c call s:CppHeader()
   autocmd FileType c,cpp,objc,objcpp,cuda call s:CMake(str2nr(expand('<abuf>')))
-  autocmd BufWritePost CMakeLists.txt,*.cmake if s:CMakeRoot(expand('<afile>:p')) !=# ''
-        \ | call s:CMakeConfigure(s:CMakeRoot(expand('<afile>:p')), s:cache . '/cmake/' . s:CacheName(s:CMakeRoot(expand('<afile>:p')), '')) | endif
+  autocmd BufWritePost CMakeLists.txt,*.cmake call s:CMakeSaved(expand('<afile>:p'))
 augroup END
 
 " tags for the system headers the current C/C++ file includes (via cc -M)
