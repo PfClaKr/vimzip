@@ -309,12 +309,40 @@ function! s:SysTags() abort
   return 1
 endfunction
 
-" go to definition: the language server, else project tags, else (C/C++) included system headers
+" the file an #include names: next to this one, in the project's include folders, then where the
+" compiler looks (its list asked once)
+function! s:IncludeFile(name) abort
+  let dirs = [expand('%:p:h'), expand('%:p:h:h') . '/include', getcwd(), getcwd() . '/include']
+  let lang = &filetype ==# 'cpp' ? 'c++' : 'c'
+  if !has_key(get(s:, 'sys_include', {}), lang)
+    let s:sys_include = get(s:, 'sys_include', {})
+    let cc = get(filter(lang ==# 'c++' ? ['c++', 'g++', 'clang++'] : ['cc', 'gcc', 'clang'], 'executable(v:val)'), 0, '')
+    let s:sys_include[lang] = cc ==# '' ? [] : map(filter(systemlist(cc . ' -E -Wp,-v -x ' . lang . ' /dev/null'),
+          \ 'v:val =~# "^ /"'), 'trim(v:val)')
+  endif
+  for d in dirs + s:sys_include[lang]
+    if filereadable(d . '/' . a:name)
+      return simplify(d . '/' . a:name)
+    endif
+  endfor
+  return ''
+endfunction
+
+" go to definition: the language server, else project tags, else (C/C++) included system headers;
+" on an #include line, that file
 function! s:GoDef() abort
   let c = &filetype =~# '^\(c\|cpp\)$'
   if s:LspHere()
     ALEGoToDefinition
     return
+  endif
+  let inc = c ? matchstr(getline('.'), '^\s*#\s*include\s*[<"]\zs[^>"]\+') : ''
+  if inc !=# ''
+    let f = s:IncludeFile(inc)
+    if f !=# ''
+      execute 'edit' fnameescape(f)
+      return
+    endif
   endif
   let w = expand('<cword>')
   if w ==# '' | return | endif
@@ -2291,7 +2319,9 @@ function! s:Docs() abort
   if s:LspHere()
     ALEHover
   elseif exists(':Man') == 2
-    execute 'Man' expand('<cword>')
+    if expand('<cword>') !=# ''  " (on a blank, :Man stopped at "E471: Argument required")
+      execute 'Man' expand('<cword>')
+    endif
   else
     echo 'No documentation: a language server (:Lsp) or man is needed'
   endif
