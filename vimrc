@@ -662,6 +662,7 @@ function! s:TimelineUpdate() abort
     return
   endif
   let f = expand('%:p')
+  let s:tl.want = f
   if f ==# s:tl.file && localtime() - s:tl.at < 2
     return
   endif
@@ -682,7 +683,8 @@ function! s:TimelineUpdate() abort
         \ 'close_cb': {_ -> s:TimelineRender(f, out)}})
 endfunction
 function! s:TimelineRender(file, out) abort
-  if !bufexists(s:tl.buf)
+  " (an older file's history arriving last, after Tab moved on to another, is not shown)
+  if !bufexists(s:tl.buf) || a:file !=# get(s:tl, 'want', a:file)
     return
   endif
   let sep = index(a:out, '@@')
