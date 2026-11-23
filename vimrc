@@ -2440,6 +2440,10 @@ endfunction
 " line instead of scrolling it (3x the output with a key held down, a terminal falling behind).
 " Only where it can scroll: the full screen width, or with the terminal's margins (see t_CV).
 function! s:RulerScroll() abort
+  " (a popup that scrolled, Space fp's list or the help, has no marks to move)
+  if win_gettype() !=# '' || empty(s:rulers)
+    return
+  endif
   " the windows that scrolled (with the mouse wheel not always the current one)
   let wins = map(filter(keys(v:event), 'v:val =~# "^\\d\\+$" && v:event[v:val].topline'), 'win_id2win(str2nr(v:val))')
   if empty(s:rulers) || empty(filter(wins, '&t_CV !=# "" || winwidth(v:val) == &columns'))
@@ -2591,7 +2595,7 @@ function! s:TreeHover() abort
 endfunction
 augroup vimzip_hover
   autocmd!
-  autocmd CursorMoved,TextChanged,WinScrolled,WinEnter * if &filetype ==# 'nerdtree' | call s:TreeHover() | endif
+  autocmd CursorMoved,TextChanged,WinScrolled,WinEnter * if &filetype ==# 'nerdtree' && win_gettype() ==# '' | call s:TreeHover() | endif
   autocmd WinLeave * call s:TreeHoverClose()
 augroup END
 
