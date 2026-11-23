@@ -1087,6 +1087,49 @@ function! s:FastNERDTree() abort
     let g:NERDTreeDirNode._renderToString = function('s:NERDTreeRender')
     let g:NERDTreeFileNode._renderToString = function('s:NERDTreeRender')
   endif
+  if exists('g:NERDTreeMenuItem')
+    let ours = {'NERDTreeAddNode': 'VimzipTreeAdd', 'NERDTreeMoveNode': 'VimzipTreeMove', 'NERDTreeCopyNode': 'VimzipTreeCopy'}
+    for item in g:NERDTreeMenuItem.All()
+      if type(get(item, 'callback', 0)) == v:t_string && has_key(ours, item.callback)
+        let item.callback = ours[item.callback]
+      endif
+    endfor
+  endif
+endfunction
+" the tree's m menu (add, move / rename, copy): a path typed without its folder is taken in the
+" selected node's folder (calc2.c: renamed where it is, new.c: created in the selected folder), not
+" from the project's root; for a move that was broken input, leaving the tab on the old name
+function! s:TreeMenu(node, prompt, default, Then) abort
+  let new = trim(input(a:prompt, a:default, 'file'))
+  if new ==# '' || new ==# a:default
+    return
+  endif
+  let base = a:node.path.isDirectory && a:Then is# function('NERDTreeAddNode') ? a:node.path.str()
+        \ : fnamemodify(a:node.path.str(), ':h')
+  let dir = new =~# '/$'
+  let new = simplify(fnamemodify(expand(new =~# '^[/~]' ? new : base . '/' . new), ':p'))
+  let new = substitute(new, '/$', '', '') . (dir ? '/' : '')
+  " NERDTree's own action, its path question answered with the full path
+  call feedkeys("\<C-u>" . new . "\<CR>", 'n')
+  call a:Then()
+endfunction
+function! VimzipTreeAdd() abort
+  let node = g:NERDTreeDirNode.GetSelected()
+  if !empty(node)
+    call s:TreeMenu(node, 'New file (a folder: end with /): ', node.path.str() . '/', function('NERDTreeAddNode'))
+  endif
+endfunction
+function! VimzipTreeMove() abort
+  let node = g:NERDTreeFileNode.GetSelected()
+  if !empty(node)
+    call s:TreeMenu(node, 'Rename or move to: ', node.path.str(), function('NERDTreeMoveNode'))
+  endif
+endfunction
+function! VimzipTreeCopy() abort
+  let node = g:NERDTreeFileNode.GetSelected()
+  if !empty(node)
+    call s:TreeMenu(node, 'Copy to: ', node.path.str(), function('NERDTreeCopyNode'))
+  endif
 endfunction
 
 " termdebug
@@ -1650,12 +1693,19 @@ function! s:Layout(...) abort
   if !empty(tree)
     let s:tree_hidden = 0
     if !want.fits
+      " (the bottom terminal under everything goes back there when the tree returns)
+      let t = bufwinid(get(s:, 'term', -1))
+      let s:term_full = t > 0 && winwidth(t) == &columns
       NERDTreeClose
       let s:tree_hidden = 1
     endif
   elseif get(s:, 'tree_hidden', 0) && want.fits
     let s:tree_hidden = 0
     NERDTreeToggle
+    let t = bufwinid(get(s:, 'term', -1))
+    if get(s:, 'term_full', 0) && t > 0
+      call win_execute(t, 'wincmd J')
+    endif
   endif
   let s:shape = string(map(range(1, winnr('$')), 'win_getid(v:val)'))
   for n in range(1, winnr('$'))
@@ -1894,14 +1944,20 @@ endfunction
 
 function! s:Save() abort
   if !exists('s:session') | return | endif
-  silent! NERDTreeClose
-  silent! diffoff!
-  for w in reverse(range(1, winnr('$')))
-    " panels and git's views of a file (diffs, old versions) are not part of the session
-    if winnr('$') > 1 && (getwinvar(w, '&buftype') !=# '' || bufname(winbufnr(w)) =~# '^\a\+://')
-      execute w . 'close'
-    endif
+  " in every tab page (:tabnew): another one's terminal came back as an empty buffer
+  let here = tabpagenr()
+  for t in range(1, tabpagenr('$'))
+    execute 'noautocmd tabnext' t
+    silent! NERDTreeClose
+    silent! diffoff!
+    for w in reverse(range(1, winnr('$')))
+      " panels and git's views of a file (diffs, old versions) are not part of the session
+      if winnr('$') > 1 && (getwinvar(w, '&buftype') !=# '' || bufname(winbufnr(w)) =~# '^\a\+://')
+        execute w . 'close'
+      endif
+    endfor
   endfor
+  execute 'noautocmd tabnext' here
   execute 'mksession!' fnameescape(s:session)
 endfunction
 
