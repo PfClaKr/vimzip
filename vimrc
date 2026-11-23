@@ -2345,7 +2345,8 @@ function! s:DropGone() abort
   endfor
 endfunction
 
-function! s:Save() abort
+" (s:SessionSave, not s:Save: Ctrl+s's function took that name and sessions stopped being saved)
+function! s:SessionSave() abort
   if !exists('s:session') | return | endif
   " in every tab page (:tabnew): another one's terminal came back as an empty buffer
   let here = tabpagenr()
@@ -2374,7 +2375,7 @@ function! s:OpenProject(dir) abort
     return
   endif
   silent! wall
-  call s:Save()
+  call s:SessionSave()
   for b in term_list()
     execute 'silent! bwipeout!' b
   endfor
@@ -2750,7 +2751,7 @@ augroup vimzip
   autocmd VimEnter * ++nested call s:Start()
   autocmd VimEnter * call timer_start(0, {-> s:GitGutterOn()})
   autocmd VimEnter,BufWritePost * if !s:lite | call s:Words() | endif
-  autocmd VimLeavePre * call s:Save()
+  autocmd VimLeavePre * call s:SessionSave()
   autocmd TerminalOpen * call s:TermOpen(str2nr(expand('<abuf>')))
   autocmd User ALELintPost call s:BarRefresh()
   autocmd BufEnter * call timer_start(0, {-> s:QuitIfOnlyPanels()})
