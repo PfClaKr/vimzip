@@ -38,6 +38,9 @@ syntax on
 " ─── basics ──────────────────────────────────────────────────────────────────────────────────────
 " basics
 set encoding=utf-8 fileencodings=ucs-bom,utf-8,cp949,latin1
+" a file that ends without a newline keeps it so, like VSCode: saved automatically after any edit,
+" it otherwise gained one, a change in git nobody made (.editorconfig's insert_final_newline wins)
+set nofixendofline
 set autoindent smarttab tabstop=4 shiftwidth=4
 set number cursorline signcolumn=yes scrolloff=5 showmatch
 set hidden autoread mouse=a belloff=all splitright splitbelow
