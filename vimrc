@@ -42,6 +42,51 @@ set encoding=utf-8 fileencodings=ucs-bom,utf-8,cp949,latin1
 " it otherwise gained one, a change in git nobody made (.editorconfig's insert_final_newline wins)
 set nofixendofline
 set autoindent smarttab tabstop=4 shiftwidth=4
+" indentation as the file already has it, like VSCode: spaces or tabs, and how many spaces (Tab
+" and >> put tabs into a file indented with two spaces). An .editorconfig still decides (its
+" plugin runs after this); Makefiles need their tabs.
+function! s:DetectIndent() abort
+  if &buftype !=# '' || exists('b:vimzip_view') || &filetype ==# 'make'
+    return
+  endif
+  let [tabs, spaces, steps, prev] = [0, 0, {}, 0]
+  for l in getline(1, 1000)
+    if l =~# '^\s*$'
+      continue
+    endif
+    let lead = matchstr(l, '^[ \t]*')
+    if lead[0] ==# "\t"
+      let tabs += 1
+      let prev = 0
+      continue
+    endif
+    let n = len(lead)
+    if n >= 2 && l[n] !=# '*'  " (not the ' * ' of a C comment)
+      let spaces += 1
+    endif
+    if n > prev && n - prev <= 8
+      let steps[n - prev] = get(steps, n - prev, 0) + 1
+    endif
+    let prev = n
+  endfor
+  if tabs > spaces
+    setlocal noexpandtab
+  elseif spaces > tabs && spaces >= 2
+    let best = 0
+    for n in [2, 4, 3, 8]
+      if get(steps, n, 0) > get(steps, best, 0)
+        let best = n
+      endif
+    endfor
+    if best
+      execute 'setlocal expandtab shiftwidth=' . best . ' softtabstop=' . best
+    endif
+  endif
+endfunction
+augroup vimzip_indent
+  autocmd!
+  autocmd BufReadPost * call s:DetectIndent()
+augroup END
 set number cursorline signcolumn=yes scrolloff=5 showmatch
 set hidden autoread mouse=a belloff=all splitright splitbelow
 set laststatus=2 showtabline=2 noshowmode showcmd noruler
