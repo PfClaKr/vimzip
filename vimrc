@@ -1350,9 +1350,27 @@ function! s:CloseBuf() abort
   call s:EditWin()
   call s:BufClose(bufnr(''), '')
 endfunction
+" why a tab cannot close: changes that were not saved, and how to save or drop them
+function! s:NotSaved(b) abort
+  let name = bufname(a:b)
+  echohl ErrorMsg
+  if name ==# ''
+    echo 'No write since last change (:w name to save, :q! to discard)'
+  elseif getbufvar(a:b, '&readonly') || !filewritable(name) && filereadable(name)
+    echo fnamemodify(name, ':t') . ' is read-only: changes not saved (:w! to save anyway, :q! to discard)'
+  else
+    echo fnamemodify(name, ':t') . ': changes not saved (:w to retry, :q! to discard)'
+  endif
+  echohl None
+endfunction
 " close a tab (buffer): every window showing it shows another tab first, or one empty tab, since
 " :bdelete closes those windows (the same file open in two splits lost one of them)
 function! s:BufClose(b, bang) abort
+  if a:bang ==# '' && getbufvar(a:b, '&modified')
+    " (one that cannot be saved: no name, read-only; :bdelete refused it silently, its tab stayed)
+    call s:NotSaved(a:b)
+    return
+  endif
   let blank = -1
   for w in win_findbuf(a:b)
     if len(getbufinfo({'buflisted': 1})) > 1
@@ -1376,9 +1394,9 @@ function! s:Quit(bang) abort
   endif
   let editwins = len(filter(range(1, winnr('$')), 'getwinvar(v:val, "&buftype") ==# ""'))
   if &buftype ==# '' && &modified && !a:bang && editwins < 2
-    " an unsaved buffer without a name (named ones are saved automatically): closing its only
+    " an unsaved buffer (named ones are saved automatically, unless read-only): closing its only
     " window would leave vim with just the panels
-    echohl ErrorMsg | echo 'No write since last change (:w name to save, :q! to discard)' | echohl None
+    call s:NotSaved(bufnr(''))
     return
   endif
   if &buftype ==# '' && a:bang
