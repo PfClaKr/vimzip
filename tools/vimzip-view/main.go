@@ -3,7 +3,7 @@
 //	vimzip-view image FILE COLS ROWS [256]
 //	  first line: "WIDTHxHEIGHT FORMAT"; then the picture fitted into COLS x ROWS cells, one line per
 //	  row of cells as runs "COUNT:TOP:BOTTOM" (each cell is a half block: two square pixels), the
-//	  colors as rrggbb, or xterm-256 numbers with the 256 argument
+//	  colors as rrggbb in 16 steps a channel, or xterm-256 numbers with the 256 argument
 //	vimzip-view pdf FILE
 //	  the text, pages separated by form feeds (for when pdftotext is not installed)
 package main
@@ -80,11 +80,14 @@ func picture(path string, cols, rows int, palette bool) error {
 			px[y*ow+x] = sample(img, b, float64(x)/scale, float64(y)/scale, 1/scale, x, y)
 		}
 	}
+	// truecolor in 16 steps a channel: vim needs a highlight group per color and has room for about
+	// 20000 in all (E849), which a few colorful pictures at full color used up
+	step := func(v uint8) uint8 { return uint8((int(v) + 8) / 17 * 17) }
 	name := func(c color.NRGBA) string {
 		if palette {
 			return strconv.Itoa(xterm(c))
 		}
-		return fmt.Sprintf("%02x%02x%02x", c.R, c.G, c.B)
+		return fmt.Sprintf("%02x%02x%02x", step(c.R), step(c.G), step(c.B))
 	}
 	for y := 0; y < oh; y += 2 {
 		var line []string

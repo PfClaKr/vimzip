@@ -117,6 +117,10 @@ function! s:AutoSave() abort
     " a failed save says so (no permission, disk full, an encoding that cannot be written):
     " silently the file stayed as it was while the tab looked saved
     try
+      " changed on disk meanwhile (another vim, git, a formatter): first vim's usual question, keep
+      " this version (OK, then "really write?" confirms) or load the file's (Load); the bare
+      " "really write? (y/n)" alone offered no way to get the file's version
+      checktime %
       silent update
     catch
       echohl ErrorMsg
@@ -125,13 +129,22 @@ function! s:AutoSave() abort
     endtry
   endif
 endfunction
+" the batched save waits while a prompt or the command line is up (:cdo ends at "Press ENTER", and
+" the last file it changed stayed unsaved); typing saves on leaving insert mode instead
+function! s:SaveLater(...) abort
+  if mode() ==# 'n'
+    call s:AutoSave()
+  elseif mode() !~# '^[iR]'
+    let s:save_timer = timer_start(500, function('s:SaveLater'))
+  endif
+endfunction
 augroup vimzip_autosave
   autocmd!
   " ++nested: the write must fire BufWritePost, or linting, git signs and tags never see the save
   autocmd InsertLeave,FocusLost,BufLeave * ++nested call s:AutoSave()
   " batch quick normal-mode edits (x, dd, ...) into one save, so linters and ctags run once
   autocmd TextChanged * call timer_stop(get(s:, 'save_timer', -1))
-        \ | let s:save_timer = timer_start(1000, {-> mode() ==# 'n' ? s:AutoSave() : 0})
+        \ | let s:save_timer = timer_start(1000, function('s:SaveLater'))
   autocmd FocusGained,BufEnter,CursorHold * silent! checktime
 augroup END
 
@@ -296,12 +309,40 @@ function! s:SysTags() abort
   return 1
 endfunction
 
-" go to definition: the language server, else project tags, else (C/C++) included system headers
+" the file an #include names: next to this one, in the project's include folders, then where the
+" compiler looks (its list asked once)
+function! s:IncludeFile(name) abort
+  let dirs = [expand('%:p:h'), expand('%:p:h:h') . '/include', getcwd(), getcwd() . '/include']
+  let lang = &filetype ==# 'cpp' ? 'c++' : 'c'
+  if !has_key(get(s:, 'sys_include', {}), lang)
+    let s:sys_include = get(s:, 'sys_include', {})
+    let cc = get(filter(lang ==# 'c++' ? ['c++', 'g++', 'clang++'] : ['cc', 'gcc', 'clang'], 'executable(v:val)'), 0, '')
+    let s:sys_include[lang] = cc ==# '' ? [] : map(filter(systemlist(cc . ' -E -Wp,-v -x ' . lang . ' /dev/null'),
+          \ 'v:val =~# "^ /"'), 'trim(v:val)')
+  endif
+  for d in dirs + s:sys_include[lang]
+    if filereadable(d . '/' . a:name)
+      return simplify(d . '/' . a:name)
+    endif
+  endfor
+  return ''
+endfunction
+
+" go to definition: the language server, else project tags, else (C/C++) included system headers;
+" on an #include line, that file
 function! s:GoDef() abort
   let c = &filetype =~# '^\(c\|cpp\)$'
   if s:LspHere()
     ALEGoToDefinition
     return
+  endif
+  let inc = c ? matchstr(getline('.'), '^\s*#\s*include\s*[<"]\zs[^>"]\+') : ''
+  if inc !=# ''
+    let f = s:IncludeFile(inc)
+    if f !=# ''
+      execute 'edit' fnameescape(f)
+      return
+    endif
   endif
   let w = expand('<cword>')
   if w ==# '' | return | endif
@@ -405,8 +446,13 @@ function! s:LspSet(id, ...) abort
     echohl WarningMsg | echo 'Unknown language: ' . a:id . ' (' . join(map(copy(s:servers), 'v:val[0]'), ', ') . ')' | echohl None
     return
   endif
+  if a:0 && a:1 !~? '^\(on\|off\|1\|0\)$'
+    echohl WarningMsg | echo 'Lsp ' . a:id . ' on, or off (not ' . a:1 . ')' | echohl None
+    return
+  endif
   let [state, server, linter] = s:LspState(lang)
-  if state ==# 'missing'
+  " (one not installed yet can still be turned off ahead)
+  if state ==# 'missing' && !(a:0 && a:1 =~? '^\(off\|0\)$')
     echohl WarningMsg | echo lang[1] . ': no language server installed. To get one: ' . server | echohl None
     return
   endif
@@ -416,7 +462,7 @@ function! s:LspSet(id, ...) abort
   call mkdir(fnamemodify(s:lsp_file, ':h'), 'p')
   call writefile([json_encode(saved)], s:lsp_file)
   call s:LspSetup()
-  if !on
+  if !on && linter !=# ''
     execute 'silent! ALEStopLSP!' linter
   endif
   for b in getbufinfo({'bufloaded': 1})
@@ -425,7 +471,7 @@ function! s:LspSet(id, ...) abort
       silent! call ale#Queue(0, 'lint_file', b.bufnr)
     endif
   endfor
-  echo lang[1] . ': ' . server . (on ? ' on' : ' off')
+  echo lang[1] . ': ' . (state ==# 'missing' ? 'stays off when a language server is installed' : server . (on ? ' on' : ' off'))
 endfunction
 function! s:LspMenu(...) abort
   let lines = []
@@ -510,11 +556,15 @@ function! s:Blame() abort
     call job_stop(s:blame_job)
   endif
   let [buf, lnum, out] = [bufnr(''), line('.'), []]
+  let s:blame_gen = get(s:, 'blame_gen', 0) + 1
+  let gen = s:blame_gen
   let s:blame_job = job_start(['git', '-C', expand('%:p:h'), 'blame', '--porcelain', '-L', lnum . ',' . lnum, '--', expand('%:t')],
-        \ {'err_io': 'null', 'out_cb': {_, l -> add(out, l)}, 'close_cb': {_ -> s:BlameShow(buf, lnum, out)}})
+        \ {'err_io': 'null', 'out_cb': {_, l -> add(out, l)}, 'close_cb': {_ -> s:BlameShow(buf, lnum, out, gen)}})
 endfunction
-function! s:BlameShow(buf, lnum, out) abort
-  if empty(a:out) || bufnr('') != a:buf || line('.') != a:lnum || mode() !=# 'n'
+function! s:BlameShow(buf, lnum, out, gen) abort
+  " (only the latest request: a stopped one still reports, and the line got its text twice)
+  if empty(a:out) || a:gen != s:blame_gen || bufnr('') != a:buf || line('.') != a:lnum || mode() !=# 'n'
+        \ || &modified || exists('s:blame_at')
     return
   endif
   let info = {}
@@ -534,7 +584,10 @@ function! s:CommitPopup() abort
   " paths as they are, not quoted with octal escapes (Korean and other non-ASCII names)
   let git = 'git -c core.quotepath=false -C ' . shellescape(expand('%:p:h'))
   let out = systemlist(git . ' blame --porcelain -L ' . line('.') . ',' . line('.') . ' -- ' . shellescape(expand('%:t')))
-  if v:shell_error || empty(out) | return | endif
+  if v:shell_error || empty(out)
+    " (a file added to git but never committed has no line in HEAD to blame)
+    let out = ['0']
+  endif
   let sha = matchstr(out[0], '^\x\+')
   let show = git . ' show --no-color --format=' . shellescape('%h  %an, %ar%n%n%B') . ' '
   if sha =~# '^0\+$'
@@ -613,6 +666,7 @@ function! s:TimelineUpdate() abort
     return
   endif
   let f = expand('%:p')
+  let s:tl.want = f
   if f ==# s:tl.file && localtime() - s:tl.at < 2
     return
   endif
@@ -633,7 +687,8 @@ function! s:TimelineUpdate() abort
         \ 'close_cb': {_ -> s:TimelineRender(f, out)}})
 endfunction
 function! s:TimelineRender(file, out) abort
-  if !bufexists(s:tl.buf)
+  " (an older file's history arriving last, after Tab moved on to another, is not shown)
+  if !bufexists(s:tl.buf) || a:file !=# get(s:tl, 'want', a:file)
     return
   endif
   let sep = index(a:out, '@@')
@@ -742,7 +797,7 @@ function! s:QuitIfOnlyPanels() abort
   for w in range(1, winnr('$'))
     let b = winbufnr(w)
     if index(['nerdtree', 'tagbar', 'vimziptimeline'], getbufvar(b, '&filetype')) < 0
-          \ && getbufvar(b, '&buftype') !=# 'terminal' && b != s:tl.buf
+          \ && index(['terminal', 'quickfix'], getbufvar(b, '&buftype')) < 0 && b != s:tl.buf
       return
     endif
   endfor
@@ -798,9 +853,14 @@ endfunction
 command! -bang -nargs=* Find call s:Find(<q-args>, <bang>0)
 " search for the selection / the word under the cursor, as plain text
 function! s:FindText(text) abort
-  let text = split(a:text, "\n")
+  let text = get(split(a:text, "\n"), 0, '')
   call s:EditWin()
-  call s:Find(empty(text) ? '' : text[0], 0, 1)
+  if text =~# "\t"
+    " fzf turns a tab in the query into a space: the tab goes as a regex \t instead
+    call s:Find(substitute(escape(text, '\.^$|?*+()[]{}'), "\t", '\\t', 'g'), 0)
+  else
+    call s:Find(text, 0, 1)
+  endif
 endfunction
 
 " ─── file tree ───────────────────────────────────────────────────────────────────────────────────
@@ -810,6 +870,9 @@ let g:NERDTreeShowHidden = 1
 let g:NERDTreeMinimalUI = 1
 let g:NERDTreeIgnore = ['^\.git$']
 let g:NERDTreeWinSize = 30
+" a file renamed, moved or deleted in the tree (m) takes its open tab along, like VSCode, with no
+" (yN) question whose key could be lost to a background event, leaving a tab on a file that is gone
+let g:NERDTreeAutoDeleteBuffer = 1
 " the tree's git colors: not recomputed whenever the cursor rests (a git status of the whole project
 " every 0.3 s, 0.5 s of vim each time with 10000 changed files); after a save, and when the folders
 " or git's index or HEAD change (a commit in the terminal, see s:TreeSyncHere)
@@ -1285,13 +1348,23 @@ function! s:Buf(cmd) abort
 endfunction
 function! s:CloseBuf() abort
   call s:EditWin()
-  let b = bufnr('')
-  if len(getbufinfo({'buflisted': 1})) > 1
-    bprevious
-  else
-    enew
-  endif
-  execute 'silent! bdelete' b
+  call s:BufClose(bufnr(''), '')
+endfunction
+" close a tab (buffer): every window showing it shows another tab first, or one empty tab, since
+" :bdelete closes those windows (the same file open in two splits lost one of them)
+function! s:BufClose(b, bang) abort
+  let blank = -1
+  for w in win_findbuf(a:b)
+    if len(getbufinfo({'buflisted': 1})) > 1
+      call win_execute(w, 'bprevious')
+    elseif blank < 0
+      call win_execute(w, 'enew')
+      let blank = winbufnr(w)
+    else
+      call win_execute(w, 'buffer ' . blank)
+    endif
+  endfor
+  execute 'silent! bdelete' . a:bang a:b
 endfunction
 
 " :q closes the current tab (buffer) like VSCode while other tabs are open; the last one quits.
@@ -1311,14 +1384,24 @@ function! s:Quit(bang) abort
   if &buftype ==# '' && a:bang
     setlocal nomodified  " discard: keep autosave (on leaving the buffer) from writing it
   endif
+  if &buftype ==# '' && editwins < 2 && tabpagenr('$') > 1
+    " the last file of one of vim's tab pages (:tabnew): that tab page closes (and an empty
+    " buffer it had leaves no empty tab behind)
+    let bufs = tabpagebuflist()
+    execute 'tabclose' . (a:bang ? '!' : '')
+    for b in bufs
+      if bufname(b) ==# '' && getbufvar(b, '&buftype') ==# '' && !getbufvar(b, '&modified') && empty(win_findbuf(b))
+        execute 'silent! bwipeout' b
+      endif
+    endfor
+    return
+  endif
   if &buftype !=# '' || editwins > 1 || len(getbufinfo({'buflisted': 1})) < 2
     let s:quitting = &buftype ==# '' && editwins < 2  " the last file: leave vim
     execute 'quit' . (a:bang ? '!' : '')
     return
   endif
-  let b = bufnr('')
-  bprevious
-  execute 'bdelete' . (a:bang ? '!' : '') b
+  call s:BufClose(bufnr(''), a:bang ? '!' : '')
   redrawtabline
 endfunction
 command! -bang VimzipQuit call s:Quit(<bang>0)
@@ -1674,8 +1757,8 @@ endfunction
 
 " extra terminal next to the current window (below or right)
 function! s:NewTerm(vert) abort
-  if exists('b:NERDTree')
-    wincmd p
+  if index(s:panels, &filetype) >= 0
+    call s:EditWin()  " (beside the editor, not splitting the tree or the outline)
   endif
   execute (a:vert ? 'vertical ' : '') . 'terminal ++kill=hup ++close'
   call s:TermKeys()
@@ -1706,15 +1789,7 @@ function! s:Start() abort
   let s:session = s:SessionFile()
   if filereadable(s:session)
     execute 'silent! source' fnameescape(s:session)
-    " files deleted since then do not come back as empty tabs
-    for gone in filter(getbufinfo({'buflisted': 1}), 'v:val.name !=# "" && !filereadable(v:val.name) && !v:val.changed')
-      if len(getbufinfo({'buflisted': 1})) > 1
-        for w in gone.windows
-          call win_execute(w, 'bprevious')
-        endfor
-        execute 'silent! bwipeout' gone.bufnr
-      endif
-    endfor
+    call s:DropGone()
   else
     enew
   endif
@@ -1724,6 +1799,24 @@ function! s:Start() abort
   NERDTree
   wincmd p
   call s:Layout()
+endfunction
+
+" files of a restored session deleted since then do not come back as tabs (typing in one would
+" save it, and its folders, again); the last one gives way to an empty tab
+function! s:DropGone() abort
+  for gone in filter(getbufinfo({'buflisted': 1}), 'v:val.name !=# "" && !filereadable(v:val.name) && !v:val.changed')
+    if len(getbufinfo({'buflisted': 1})) > 1
+      for w in gone.windows
+        call win_execute(w, 'bprevious')
+      endfor
+    elseif !empty(gone.windows)
+      call win_execute(gone.windows[0], 'enew')
+      for w in gone.windows[1:]
+        call win_execute(w, 'buffer ' . winbufnr(gone.windows[0]))
+      endfor
+    endif
+    execute 'silent! bwipeout' gone.bufnr
+  endfor
 endfunction
 
 function! s:Save() abort
@@ -1760,6 +1853,7 @@ function! s:OpenProject(dir) abort
   let s:session = s:SessionFile()
   if filereadable(s:session)
     execute 'silent! source' fnameescape(s:session)
+    call s:DropGone()
   endif
   execute 'NERDTree' fnameescape(getcwd())
   wincmd p
@@ -1785,6 +1879,9 @@ command! -nargs=? -complete=dir Project if <q-args> ==# '' | call s:PickProject(
 
 function! s:TermOpen(buf) abort
   call setbufvar(a:buf, '&buflisted', 0)
+  " any terminal, also one from :terminal, ends with vim, like vimzip's own (++kill=hup): :qa or
+  " :q in the last file stopped at E947 "Job still running", leaving the tree and the terminal
+  call term_setkill(a:buf, 'hup')
   if bufnr('') == a:buf
     setlocal nonumber nocursorline signcolumn=no
   endif
@@ -1881,12 +1978,14 @@ function! s:Prune(...) abort
   let Path = {f -> substitute(fnamemodify(f, ':t:r'), '%', '/', 'g')}
   " (a hashed name, see s:CacheName, cannot be traced back to its file: it only ages)
   let Hashed = {f -> fnamemodify(f, ':t') !~# '%'}
+  " (backup/: a save's safety copy is removed after it; one left over is from a save cut short)
   let rules = [['undo/*', 365, {f -> Hashed(f) || filereadable(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}],
         \      ['sessions/*.vim', 365, {f -> isdirectory(s:SessionDir(f))}],
         \      ['words/*.txt', 90, {f -> Hashed(f) || isdirectory(Path(f))}],
         \      ['systags/*.tags', 90, {f -> Hashed(f) || filereadable(Path(f))}],
         \      ['tags/*-tags', 90, {f -> 1}],
-        \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}]]
+        \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}],
+        \      ['backup/*', 7, {f -> 0}]]
   for [pat, days, Exists] in rules
     for f in glob(s:cache . '/' . pat, 1, 1)
       let age = (localtime() - getftime(f)) / day
@@ -1924,8 +2023,29 @@ function! s:KeepPanel(win, buf) abort
   execute 'buffer' a:buf
 endfunction
 
+" :e on a folder: that folder opened in the tree, not an empty tab named after it (whose autosave
+" then failed: "is a directory")
+function! s:OpenDir(buf) abort
+  if !bufexists(a:buf) || !isdirectory(bufname(a:buf))
+    return
+  endif
+  let dir = substitute(fnamemodify(bufname(a:buf), ':p'), '.\zs/$', '', '')
+  call s:BufClose(a:buf, '')
+  execute 'silent! bwipeout' a:buf
+  " under the project's root: shown open there; outside it: as the tree's root
+  if dir ==# getcwd()
+    NERDTreeFocus
+  elseif stridx(dir, getcwd() . '/') == 0
+    execute 'NERDTreeFind' fnameescape(dir . '/')
+  else
+    execute 'NERDTree' fnameescape(dir)
+  endif
+endfunction
+
 augroup vimzip
   autocmd!
+  autocmd BufEnter * if v:vim_did_enter && &buftype ==# '' && isdirectory(expand('<afile>'))
+        \ | let s:dirbuf = str2nr(expand('<abuf>')) | call timer_start(0, {-> s:OpenDir(s:dirbuf)}) | endif
   autocmd BufEnter * let s:enter = [win_getid(), bufnr('')] | call timer_start(0, {-> s:KeepPanel(s:enter[0], s:enter[1])})
   autocmd VimEnter * call timer_start(5000, function('s:Prune'))
   autocmd VimEnter * call s:FastNERDTree()
@@ -1945,6 +2065,8 @@ augroup vimzip
         \ | endfor
   " git's versions of a file (diffs, blame, history) stay out of the tabs
   autocmd BufReadPost fugitive://* setlocal nobuflisted
+  " and so do the quickfix and location lists (Tab and Space q would show them in the editor)
+  autocmd FileType qf setlocal nobuflisted
   " the timeline lives under the tree: it goes away and comes back with it
   autocmd BufWinLeave NERD_tree_* call timer_start(0, {-> s:TreeGone()})
   autocmd BufWinEnter NERD_tree_* call timer_start(0, {-> s:TreeBack()})
@@ -2081,13 +2203,17 @@ function! s:ImgShow(buf, out, size) abort
     let width = eval(join(map(copy(runs), 'v:val[0]'), '+'))
     let text = repeat(' ', max([0, (a:size[0] - width) / 2]) + 1)
     for [n, top, bottom] in runs
-      let name = 'VimzipImg_' . top . '_' . bottom
-      if !has_key(s:img_hl, name)
-        let s:img_hl[name] = gui ? printf('guifg=#%s guibg=#%s', top, bottom) : printf('ctermfg=%s ctermbg=%s', top, bottom)
-        execute 'highlight' name s:img_hl[name]
-        call prop_type_add(name, {'highlight': name})
-      endif
-      call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * 3, name])
+      " a group per color, not per pair of them (vim has room for about 20000 groups): one
+      " property gives the upper half's color, another the lower's, and vim combines the two
+      for [name, hl] in [['VimzipImgF_' . top, (gui ? 'guifg=#' : 'ctermfg=') . top],
+            \            ['VimzipImgB_' . bottom, (gui ? 'guibg=#' : 'ctermbg=') . bottom]]
+        if !has_key(s:img_hl, name)
+          let s:img_hl[name] = hl
+          execute 'highlight' name hl
+          call prop_type_add(name, {'highlight': name})
+        endif
+        call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * 3, name])
+      endfor
       let text .= repeat('▀', str2nr(n))
     endfor
     call add(lines, text)
@@ -2246,7 +2372,9 @@ function! s:Docs() abort
   if s:LspHere()
     ALEHover
   elseif exists(':Man') == 2
-    execute 'Man' expand('<cword>')
+    if expand('<cword>') !=# ''  " (on a blank, :Man stopped at "E471: Argument required")
+      execute 'Man' expand('<cword>')
+    endif
   else
     echo 'No documentation: a language server (:Lsp) or man is needed'
   endif
@@ -2269,15 +2397,25 @@ function! s:InGit() abort
   return 1
 endfunction
 " (a command run from here: :Git in a mapping's if ... endif took the endif as its own)
-function! s:GitRun(cmd) abort
-  if s:InGit()
-    execute a:cmd
+" a:1: about the current file's history, which a new file git does not know has none (the
+" comparison was empty, the commit popup silent, blame a "fatal:" line)
+function! s:GitRun(cmd, ...) abort
+  if !s:InGit()
+    return
   endif
+  if get(a:, 1, 0) && &buftype ==# '' && filereadable(expand('%:p'))
+    call system('git -C ' . shellescape(expand('%:p:h')) . ' ls-files --error-unmatch -- ' . shellescape(expand('%:t')))
+    if v:shell_error
+      echohl WarningMsg | echo expand('%:t') . ' is not in git yet' | echohl None
+      return
+    endif
+  endif
+  execute a:cmd
 endfunction
 nnoremap <silent> <leader>gs :call <SID>EditWin()<Bar>call <SID>GitRun('Git')<CR>
-nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>CommitPopup()')<CR>
+nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>CommitPopup()', 1)<CR>
 nnoremap <silent> <leader>gb :call <SID>EditWin()<Bar>let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
-nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>call <SID>GitRun('Git blame')<CR>
+nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>call <SID>GitRun('Git blame', 1)<CR>
 nnoremap <silent> <leader>gh :call <SID>EditWin()<Bar>GV!<CR>
 xnoremap <silent> <leader>gh :GV<CR>
 nnoremap <silent> <leader>gl :call <SID>EditWin()<Bar>GV<CR>
@@ -2290,12 +2428,12 @@ function! s:DiffSplit(mods, rev) abort
       execute (a:mods ==# '' ? 'leftabove' : a:mods) 'Gvsplit' (a:rev ==# '' ? ':%' : a:rev . ':%')
       return
     endif
-    execute a:mods . ' ' . (winwidth(0) >= 2 * &winminwidth + 30 ? 'Gvdiffsplit' : 'Gdiffsplit') . ' ' . a:rev
+    execute a:mods . ' ' . (winwidth(0) >= 54 ? 'Gvdiffsplit' : 'Gdiffsplit') . ' ' . a:rev
   catch /E36:/
     echohl WarningMsg | echo 'No room to compare: close a panel or split' | echohl None
   endtry
 endfunction
-nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>DiffSplit("", "")')<CR>
+nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>DiffSplit("", "")', 1)<CR>
 nmap <silent> <leader>gp :call <SID>EditWin()<CR><Plug>(GitGutterPreviewHunk)
 nmap <silent> <leader>ga :call <SID>EditWin()<CR><Plug>(GitGutterStageHunk)
 nmap <silent> <leader>gu :call <SID>EditWin()<CR><Plug>(GitGutterUndoHunk)
