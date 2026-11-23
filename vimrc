@@ -86,6 +86,10 @@ endfunction
 augroup vimzip_indent
   autocmd!
   autocmd BufReadPost * call s:DetectIndent()
+  " a file opened again starts where it was left (vim's defaults.vim does this, which -u skips);
+  " not a commit message, which is new each time
+  autocmd BufReadPost * if line("'\"") > 1 && line("'\"") <= line('$') && &filetype !~# '^git\(commit\|rebase\)$'
+        \ && expand('<afile>') !~# '^\a\+://' | execute 'normal! g`"' | endif
 augroup END
 set number cursorline signcolumn=yes scrolloff=5 showmatch
 set hidden autoread mouse=a belloff=all splitright splitbelow
