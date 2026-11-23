@@ -332,7 +332,8 @@ let s:code_skip = {
       \ 'go': 'package\|import\|const\|var\|type\|func\|struct\|interface\|map\|chan\|go\|defer\|select\|range\|return\|if\|else\|for\|switch\|case\|default\|break\|continue\|goto\|fallthrough'}
 function! s:CodeSyntax() abort
   let kind = get(s:code_syntax, &syntax, -1)
-  if kind is -1 || exists('b:vimzip_view')
+  " (another colorscheme in the vimrc: vim's own look, as that scheme colors it)
+  if kind is -1 || exists('b:vimzip_view') || get(g:, 'colors_name', '') !=# 'vimzip'
     return
   endif
   if kind ==# 'ts'
@@ -376,9 +377,6 @@ function! s:CodeSyntax() abort
     unlet! b:current_syntax
     execute 'runtime! syntax/' . &syntax . '.vim syntax/' . &syntax . '/*.vim'
   endif
-  highlight default link vimzipFunction Function
-  highlight default link vimzipType Type
-  highlight default link vimzipConstant Constant
 endfunction
 augroup vimzip_code
   autocmd!
