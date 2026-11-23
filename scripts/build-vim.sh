@@ -35,11 +35,17 @@ make -s install >/dev/null
 # installed one instead.
 if [ -z "${ICONV_PREFIX:-}" ]; then
   mkdir -p "$W/libiconv"
-  for i in 1 2 3 4; do
-    curl -fsSL "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-$LIBICONV_VERSION.tar.gz" |
-      tar -xz -C "$W/libiconv" --strip-components=1 && break
-    sleep $((i * 5))
+  # (ftp.gnu.org alone did not answer once and the release failed: its mirrors too, each given 30 s
+  # to answer, not the two minutes curl waits by default)
+  f=libiconv-$LIBICONV_VERSION.tar.gz
+  for i in 1 2 3; do
+    for site in https://ftp.gnu.org/pub/gnu https://ftpmirror.gnu.org https://mirrors.kernel.org/gnu; do
+      curl -fsSL --connect-timeout 30 -o "$W/$f" "$site/libiconv/$f" && tar -xzf "$W/$f" -C "$W/libiconv" --strip-components=1 &&
+        break 2
+    done
+    sleep $((i * 10))
   done
+  [ -x "$W/libiconv/configure" ] || { echo "could not download $f" >&2; exit 1; }
   (cd "$W/libiconv" && ./configure -q CC="$CC" --prefix="$W/iconv" --enable-static --disable-shared --disable-nls &&
     make -s -j"$J" >/dev/null && make -s install >/dev/null)
   ICONV_PREFIX=$W/iconv
