@@ -1650,12 +1650,19 @@ function! s:Layout(...) abort
   if !empty(tree)
     let s:tree_hidden = 0
     if !want.fits
+      " (the bottom terminal under everything goes back there when the tree returns)
+      let t = bufwinid(get(s:, 'term', -1))
+      let s:term_full = t > 0 && winwidth(t) == &columns
       NERDTreeClose
       let s:tree_hidden = 1
     endif
   elseif get(s:, 'tree_hidden', 0) && want.fits
     let s:tree_hidden = 0
     NERDTreeToggle
+    let t = bufwinid(get(s:, 'term', -1))
+    if get(s:, 'term_full', 0) && t > 0
+      call win_execute(t, 'wincmd J')
+    endif
   endif
   let s:shape = string(map(range(1, winnr('$')), 'win_getid(v:val)'))
   for n in range(1, winnr('$'))
