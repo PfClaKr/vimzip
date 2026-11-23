@@ -38,7 +38,61 @@ syntax on
 " ─── basics ──────────────────────────────────────────────────────────────────────────────────────
 " basics
 set encoding=utf-8 fileencodings=ucs-bom,utf-8,cp949,latin1
+" a file that ends without a newline keeps it so, like VSCode: saved automatically after any edit,
+" it otherwise gained one, a change in git nobody made (.editorconfig's insert_final_newline wins)
+set nofixendofline
+" Ctrl+a on 007 gives 008, not octal 010 (defaults.vim, which -u skips, does the same)
+set nrformats-=octal
 set autoindent smarttab tabstop=4 shiftwidth=4
+" indentation as the file already has it, like VSCode: spaces or tabs, and how many spaces (Tab
+" and >> put tabs into a file indented with two spaces). An .editorconfig still decides (its
+" plugin runs after this); Makefiles need their tabs.
+function! s:DetectIndent() abort
+  if &buftype !=# '' || exists('b:vimzip_view') || &filetype ==# 'make'
+    return
+  endif
+  let [tabs, spaces, steps, prev] = [0, 0, {}, 0]
+  for l in getline(1, 1000)
+    if l =~# '^\s*$'
+      continue
+    endif
+    let lead = matchstr(l, '^[ \t]*')
+    if lead[0] ==# "\t"
+      let tabs += 1
+      let prev = 0
+      continue
+    endif
+    let n = len(lead)
+    if n >= 2 && l[n] !=# '*'  " (not the ' * ' of a C comment)
+      let spaces += 1
+    endif
+    if n > prev && n - prev <= 8
+      let steps[n - prev] = get(steps, n - prev, 0) + 1
+    endif
+    let prev = n
+  endfor
+  if tabs > spaces
+    setlocal noexpandtab
+  elseif spaces > tabs && spaces >= 2
+    let best = 0
+    for n in [2, 4, 3, 8]
+      if get(steps, n, 0) > get(steps, best, 0)
+        let best = n
+      endif
+    endfor
+    if best
+      execute 'setlocal expandtab shiftwidth=' . best . ' softtabstop=' . best
+    endif
+  endif
+endfunction
+augroup vimzip_indent
+  autocmd!
+  autocmd BufReadPost * call s:DetectIndent()
+  " a file opened again starts where it was left (vim's defaults.vim does this, which -u skips);
+  " not a commit message, which is new each time
+  autocmd BufReadPost * if line("'\"") > 1 && line("'\"") <= line('$') && &filetype !~# '^git\(commit\|rebase\)$'
+        \ && expand('<afile>') !~# '^\a\+://' | execute 'normal! g`"' | endif
+augroup END
 set number cursorline signcolumn=yes scrolloff=5 showmatch
 set hidden autoread mouse=a belloff=all splitright splitbelow
 set laststatus=2 showtabline=2 noshowmode showcmd noruler
@@ -1350,9 +1404,27 @@ function! s:CloseBuf() abort
   call s:EditWin()
   call s:BufClose(bufnr(''), '')
 endfunction
+" why a tab cannot close: changes that were not saved, and how to save or drop them
+function! s:NotSaved(b) abort
+  let name = bufname(a:b)
+  echohl ErrorMsg
+  if name ==# ''
+    echo 'No write since last change (:w name to save, :q! to discard)'
+  elseif getbufvar(a:b, '&readonly') || !filewritable(name) && filereadable(name)
+    echo fnamemodify(name, ':t') . ' is read-only: changes not saved (:w! to save anyway, :q! to discard)'
+  else
+    echo fnamemodify(name, ':t') . ': changes not saved (:w to retry, :q! to discard)'
+  endif
+  echohl None
+endfunction
 " close a tab (buffer): every window showing it shows another tab first, or one empty tab, since
 " :bdelete closes those windows (the same file open in two splits lost one of them)
 function! s:BufClose(b, bang) abort
+  if a:bang ==# '' && getbufvar(a:b, '&modified')
+    " (one that cannot be saved: no name, read-only; :bdelete refused it silently, its tab stayed)
+    call s:NotSaved(a:b)
+    return
+  endif
   let blank = -1
   for w in win_findbuf(a:b)
     if len(getbufinfo({'buflisted': 1})) > 1
@@ -1376,9 +1448,9 @@ function! s:Quit(bang) abort
   endif
   let editwins = len(filter(range(1, winnr('$')), 'getwinvar(v:val, "&buftype") ==# ""'))
   if &buftype ==# '' && &modified && !a:bang && editwins < 2
-    " an unsaved buffer without a name (named ones are saved automatically): closing its only
+    " an unsaved buffer (named ones are saved automatically, unless read-only): closing its only
     " window would leave vim with just the panels
-    echohl ErrorMsg | echo 'No write since last change (:w name to save, :q! to discard)' | echohl None
+    call s:NotSaved(bufnr(''))
     return
   endif
   if &buftype ==# '' && a:bang
@@ -1719,6 +1791,7 @@ endfunction
 " Ctrl+N: also offer words from the git project's source files. rg collects them in the background
 " into a sorted file and each completion greps it, so vim's memory stays flat on huge projects.
 let s:src_types = ' -t c -t cpp -t h -t py -t sh -t cmake -t make -t go -t rust -t java -t js -t ts -t lua -t vim -t md'
+      \ . ' -t dart -t zig -t kotlin -t swift -t ruby -t php -t csharp -t scala -t elixir -t haskell -t perl'
 function! s:Words() abort
   if (exists('s:words_job') && job_status(s:words_job) ==# 'run') || localtime() - get(s:, 'words_at', 0) < 60
     return
@@ -2364,6 +2437,11 @@ endif
 function! s:Refs() abort
   if s:LspHere()
     ALEFindReferences
+  elseif expand('<cword>') =~# '^\w\+$'
+    " the whole word only: calc should not list every calc_add and calc_eval
+    let w = expand('<cword>')
+    call s:EditWin()
+    call s:Find('\b' . w . '\b', 0)
   else
     call s:FindText(expand('<cword>'))
   endif
@@ -2383,7 +2461,15 @@ nnoremap <silent> gr :call <SID>Refs()<CR>
 nnoremap <silent> K :call <SID>Docs()<CR>
 nmap ]e <Plug>(ale_next_wrap)
 nmap [e <Plug>(ale_previous_wrap)
-nnoremap <silent> <leader>ce :ALEDetail<CR>
+" (on a line without one: a word saying so, not nothing at all)
+function! s:ErrorDetail() abort
+  if exists('*ale#util#FindItemAtCursor') && empty(ale#util#FindItemAtCursor(bufnr(''))[1])
+    echo 'No error or warning on this line'
+  else
+    ALEDetail
+  endif
+endfunction
+nnoremap <silent> <leader>ce :call <SID>ErrorDetail()<CR>
 nnoremap <silent> <leader>cl :Lsp<CR>
 nnoremap <silent> <leader>cf gg=G``
 
