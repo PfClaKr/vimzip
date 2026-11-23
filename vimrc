@@ -4195,7 +4195,8 @@ function! s:ViewNow() abort
     endif
   endfor
 endfunction
-augroup vimzip_view
+" (vimzip_scroll: vimzip_view is the picture viewer's, which this group's autocmd! emptied)
+augroup vimzip_scroll
   autocmd!
   autocmd WinScrolled * call s:ViewLater(map(filter(keys(v:event), 'v:val =~# "^\\d\\+$"'), 'str2nr(v:val)'))
   autocmd BufWinEnter,TextChanged,TextChangedI,InsertLeave,Syntax * call s:ViewLater([win_getid()])
