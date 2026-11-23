@@ -184,6 +184,7 @@ let s:plugin_cmds = [
       \ ['vimzip', [
       \   [':VimzipInfo', 'CPUs, memory, light or full mode'],
       \   [':Lsp  :Lsp rust off', 'language servers: list, switch'],
+      \   [':CMake', 'read include paths from CMake again'],
       \   [':Find text', 'search the project'],
       \   [':Project path', 'open another project'],
       \   [':Theme name', 'status bar colors (:Theme lists)']]],

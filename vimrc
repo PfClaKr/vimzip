@@ -4,7 +4,7 @@ set nocompatible
 let &packpath = $VIMZIP . ',' . $VIMRUNTIME
 let &runtimepath = $VIMZIP . ',' . $VIMRUNTIME . ',' . $VIMRUNTIME . '/after'
 let s:cache = expand('~/.cache/vimzip')
-for s:d in ['undo', 'sessions', 'tags', 'systags', 'words', 'backup']
+for s:d in ['undo', 'sessions', 'tags', 'systags', 'words', 'backup', 'cmake']
   silent! call mkdir(s:cache . '/' . s:d, 'p')
 endfor
 " a cache file named after a path ('/' as '%'), or after a hash of it when that name would be too
@@ -404,6 +404,135 @@ let g:ale_floating_window_border = ['│', '─', '╭', '╮', '╯', '╰', '�
 let g:ale_pattern_options = {'^/usr/': {'ale_enabled': 0}}
 autocmd BufReadPost /usr/* setlocal readonly nomodifiable
 
+" CMake projects: their include paths and defines come from CMake. A project that does not keep a
+" compile_commands.json of its own (cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON) gets one in
+" the cache, made in the background the first time one of its C/C++ files opens, and again after a
+" CMakeLists.txt is saved; the checks (ALE's cc) and clangd then find its headers, as VSCode's
+" CMake Tools does. g:vimzip_cmake = 0 turns it off.
+let s:cmake = {}
+function! s:CMakeRoot(file) abort
+  " the topmost folder with a CMakeLists.txt, up to the git work tree's root
+  let dir = fnamemodify(a:file, ':p:h')
+  let git = finddir('.git', dir . ';')
+  let git = git !=# '' ? git : findfile('.git', dir . ';')
+  let stop = git !=# '' ? fnamemodify(git, ':p:h:h') : '/'
+  let found = ''
+  while 1
+    if filereadable(dir . '/CMakeLists.txt')
+      let found = dir
+    endif
+    if dir ==# stop || dir ==# fnamemodify(dir, ':h')
+      return found
+    endif
+    let dir = fnamemodify(dir, ':h')
+  endwhile
+endfunction
+function! s:CMake(buf) abort
+  let file = fnamemodify(bufname(a:buf), ':p')
+  if !get(g:, 'vimzip_cmake', 1) || !executable('cmake') || getbufvar(a:buf, '&buftype') !=# '' || file =~# '^/usr/'
+    return
+  endif
+  let root = s:CMakeRoot(file)
+  if root ==# ''
+    return
+  endif
+  let dir = s:cache . '/cmake/' . s:CacheName(root, '')
+  if filereadable(dir . '/compile_commands.json')
+    call s:CMakeUse(a:buf, dir)
+  endif
+  if !filereadable(dir . '/compile_commands.json') || getftime(root . '/CMakeLists.txt') > getftime(dir . '/compile_commands.json')
+    call s:CMakeConfigure(root, dir)
+  endif
+endfunction
+function! s:CMakeUse(buf, dir) abort
+  " (the project's own compile_commands.json, if it has one, still comes first)
+  if exists('*ale#c#FindCompileCommands') && empty(getbufvar(a:buf, 'ale_c_build_dir_names'))
+        \ && !empty(ale#c#FindCompileCommands(a:buf)[1])
+    return
+  endif
+  call setbufvar(a:buf, 'ale_c_build_dir_names', [a:dir])
+endfunction
+function! s:CMakeConfigure(root, dir) abort
+  if job_status(get(get(s:cmake, a:root, {}), 'job', test_null_job())) ==# 'run'
+    return
+  endif
+  call mkdir(a:dir, 'p')
+  let log = a:dir . '/vimzip-cmake.log'
+  let cmd = (s:lite ? ['nice', '-n', '10'] : []) + ['cmake', '-S', a:root, '-B', a:dir,
+        \ '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', '-Wno-dev']
+  let s:cmake[a:root] = {'job': job_start(cmd, {'in_io': 'null', 'out_io': 'file', 'out_name': log,
+        \ 'err_io': 'out', 'exit_cb': {_, status -> s:CMakeDone(a:root, a:dir, status)}})}
+endfunction
+function! s:CMakeDone(root, dir, status) abort
+  let made = a:status == 0 && filereadable(a:dir . '/compile_commands.json')
+  if !made
+    " (a package it needs is missing, ...): the project's folders with headers instead, as VSCode
+    " does without one (${workspaceFolder}/**); :CMake tries again
+    let guessed = s:GuessIncludes(a:root, a:dir)
+    echohl WarningMsg
+    echomsg 'CMake could not configure ' . fnamemodify(a:root, ':~') . (guessed ? ' (include paths guessed)' : '')
+          \ . ': see ' . fnamemodify(a:dir, ':~') . '/vimzip-cmake.log, :CMake to retry'
+    echohl None
+    if !guessed
+      return
+    endif
+  endif
+  let again = []
+  for b in getbufinfo({'bufloaded': 1})
+    if getbufvar(b.bufnr, '&filetype') =~# '^\(c\|cpp\|objc\|objcpp\|cuda\)$' && stridx(b.name, a:root . '/') == 0
+      call s:CMakeUse(b.bufnr, a:dir)
+      call add(again, b.bufnr)
+    endif
+  endfor
+  " a clangd started before this has the old flags: it starts again with the new ones
+  silent! ALEStopLSP clangd
+  for b in again
+    silent! call ale#Queue(0, 'lint_file', b)
+  endfor
+endfunction
+" a compile_commands.json with the folders that hold headers (and their parents, for "lib/x.h")
+" as include paths, one entry per source folder (clangd and ALE use it for the folder's other files)
+function! s:GuessIncludes(root, dir) abort
+  let files = systemlist('rg --files -t c -t cpp -t h ' . shellescape(a:root))
+  let hdr = '\.\(h\|hh\|hpp\|hxx\|inl\)$'
+  let incs = {}
+  for f in filter(copy(files), 'v:val =~? hdr')
+    let d = fnamemodify(f, ':h')
+    let incs[d] = 1
+    if stridx(fnamemodify(d, ':h'), a:root) == 0
+      let incs[fnamemodify(d, ':h')] = 1
+    endif
+  endfor
+  let dirs = {}
+  for f in filter(files, 'v:val !~? hdr')
+    let dirs[fnamemodify(f, ':h')] = f
+  endfor
+  if v:shell_error || empty(dirs) || len(incs) > 300 || len(dirs) > 2000
+    return 0
+  endif
+  let flags = map(sort(keys(incs)), '"-I" . v:val')
+  let db = map(values(dirs), {_, f -> {'directory': a:root, 'file': f,
+        \ 'arguments': [f =~? '\.c$' ? 'cc' : 'c++'] + flags + ['-c', f]}})
+  call writefile([json_encode(db)], a:dir . '/compile_commands.json')
+  return 1
+endfunction
+function! s:CMakeHere() abort
+  let root = s:CMakeRoot(expand('%:p'))
+  if root ==# ''
+    echo 'No CMakeLists.txt above this file'
+    return
+  endif
+  call s:CMakeConfigure(root, s:cache . '/cmake/' . s:CacheName(root, ''))
+  echo 'CMake: configuring ' . fnamemodify(root, ':~') . ' for its include paths...'
+endfunction
+command! -bar CMake call s:CMakeHere()
+augroup vimzip_cmake
+  autocmd!
+  autocmd FileType c,cpp,objc,objcpp,cuda call s:CMake(str2nr(expand('<abuf>')))
+  autocmd BufWritePost CMakeLists.txt,*.cmake if s:CMakeRoot(expand('<afile>:p')) !=# ''
+        \ | call s:CMakeConfigure(s:CMakeRoot(expand('<afile>:p')), s:cache . '/cmake/' . s:CacheName(s:CMakeRoot(expand('<afile>:p')), '')) | endif
+augroup END
+
 " tags for the system headers the current C/C++ file includes (via cc -M)
 function! s:SysTags() abort
   let cxx = &filetype ==# 'cpp'
@@ -490,7 +619,18 @@ let s:servers = [
   \   [['tsserver', 'tsserver', 'npm install -g typescript']]],
   \ ['lua', 'Lua', ['lua'], [['lua_language_server', 'lua-language-server', 'install lua-language-server']]],
   \ ['bash', 'Bash', ['sh'], [['language_server', 'bash-language-server', 'npm install -g bash-language-server']]],
-  \ ['zig', 'Zig', ['zig'], [['zls', 'zls', 'install zls']]]]
+  \ ['zig', 'Zig', ['zig'], [['zls', 'zls', 'install zls']]],
+  \ ['cmake', 'CMake', ['cmake'], [['cmake_language_server', 'cmake-language-server', "pip install cmake-language-server 'pygls<2'"]]]]
+" (ALE has no CMake server of its own: commands' help on K, completion, in CMakeLists.txt; it reads
+" the targets from the build vimzip made for the project, see "CMake projects")
+function! s:CMakeLspRoot(buffer) abort
+  let root = s:CMakeRoot(fnamemodify(bufname(a:buffer), ':p'))
+  return root !=# '' ? root : fnamemodify(bufname(a:buffer), ':p:h')
+endfunction
+silent! call ale#linter#Define('cmake', {'name': 'cmake_language_server', 'lsp': 'stdio',
+      \ 'executable': 'cmake-language-server', 'command': '%e',
+      \ 'project_root': function('s:CMakeLspRoot'),
+      \ 'initialization_options': {b -> {'buildDirectory': s:cache . '/cmake/' . s:CacheName(s:CMakeLspRoot(b), '')}}})
 " plain checkers in place of a server that is off, or next to one (s:also); ALE skips missing ones
 let s:checkers = {'c': ['cc'], 'cpp': ['cc'], 'sh': ['shellcheck'], 'python': ['ruff', 'flake8'],
   \ 'go': ['gofmt', 'govet'], 'lua': ['luacheck'], 'typescript': ['eslint'], 'javascript': ['eslint']}
@@ -2178,12 +2318,13 @@ function! s:Prune(...) abort
         \      ['systags/*.tags', 90, {f -> Hashed(f) || filereadable(Path(f))}],
         \      ['tags/*-tags', 90, {f -> 1}],
         \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}],
-        \      ['backup/*', 7, {f -> 0}]]
+        \      ['backup/*', 7, {f -> 0}],
+        \      ['cmake/*', 90, {f -> Hashed(f) || isdirectory(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}]]
   for [pat, days, Exists] in rules
     for f in glob(s:cache . '/' . pat, 1, 1)
       let age = (localtime() - getftime(f)) / day
       if age > days || (age > min([days, 30]) && !Exists(f))
-        call delete(f)
+        call delete(f, isdirectory(f) ? 'rf' : '')
       endif
     endfor
   endfor
