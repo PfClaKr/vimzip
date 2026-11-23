@@ -3213,6 +3213,12 @@ function! s:Format(saving) abort
     return
   endif
   call delete(err)
+  " (nothing back for a file with text in it: the formatter failed without saying so; the file
+  " would have been emptied)
+  if empty(out) && join(lines, '') =~# '\S'
+    echohl WarningMsg | echo 'Not formatted (' . prog . '): it gave nothing back' | echohl None
+    return
+  endif
   if out ==# lines
     if !a:saving | echo 'Formatted (' . prog . '): no change' | endif
     return
@@ -4115,7 +4121,9 @@ function! s:Sticky(...) abort
   let heads = []
   if ok
     call win_execute(w, 'let s:sticky_heads = s:StickyHeads(' . w . ')')
-    let heads = s:sticky_heads
+    " (never over the cursor: with a small 'scrolloff' it can be on the window's first rows)
+    let room = line('.', w) - line('w0', w)
+    let heads = room > 0 ? s:sticky_heads[: room - 1] : []
   endif
   let id = get(s:sticky, w, 0)
   if empty(heads)
@@ -4184,6 +4192,8 @@ augroup vimzip_view
   autocmd WinScrolled * call s:ViewLater(map(filter(keys(v:event), 'v:val =~# "^\\d\\+$"'), 'str2nr(v:val)'))
   autocmd BufWinEnter,TextChanged,TextChangedI,InsertLeave,Syntax * call s:ViewLater([win_getid()])
   autocmd WinResized,VimResized,TabEnter,WinClosed * call s:ViewLater(gettabinfo(tabpagenr())[0].windows)
+  " (the cursor near the top: the sticky lines make room for it, or take it back)
+  autocmd CursorMoved * if line('.') - line('w0') <= 3 && &buftype ==# '' | call s:ViewLater([win_getid()]) | endif
 augroup END
 
 " the mouse resting on code: the problem there or the language server's hover in a popup
