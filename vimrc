@@ -1699,8 +1699,8 @@ endfunction
 
 " extra terminal next to the current window (below or right)
 function! s:NewTerm(vert) abort
-  if exists('b:NERDTree')
-    wincmd p
+  if index(s:panels, &filetype) >= 0
+    call s:EditWin()  " (beside the editor, not splitting the tree or the outline)
   endif
   execute (a:vert ? 'vertical ' : '') . 'terminal ++kill=hup ++close'
   call s:TermKeys()
