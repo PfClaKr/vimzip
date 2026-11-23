@@ -26,10 +26,12 @@ endfunction
 " built-in packages
 let g:loaded_netrw = 1
 let g:loaded_netrwPlugin = 1
+" vim's plugins no one here uses (vimball archives, :GLVS, LogiPat, :TOhtml): not loaded at start
+let [g:loaded_vimballPlugin, g:loaded_getscriptPlugin, g:loaded_logiPat, g:loaded_rrhelper] = [1, 1, 1, 1]
+let g:loaded_2html_plugin = 1
 packadd! comment
 packadd! editorconfig
 packadd! matchit
-packadd! termdebug
 packadd osc52
 
 filetype plugin indent on
@@ -806,10 +808,17 @@ function! s:CMakeBuildDir(buffer) abort
   let own = exists('g:loaded_ale') ? ale#c#FindCompileCommands(a:buffer)[1] : ''
   return own !=# '' ? fnamemodify(own, ':h') : s:cache . '/cmake/' . s:CacheName(s:CMakeLspRoot(a:buffer), '')
 endfunction
-silent! call ale#linter#Define('cmake', {'name': 'cmake_language_server', 'lsp': 'stdio',
-      \ 'executable': 'cmake-language-server', 'command': '%e',
-      \ 'project_root': function('s:CMakeLspRoot'),
-      \ 'initialization_options': {b -> {'buildDirectory': s:CMakeBuildDir(b)}}})
+" (made known to ALE when a CMake file first opens: at start, loading ALE's linter code took 1.4 ms)
+function! s:CMakeLsp() abort
+  silent! call ale#linter#Define('cmake', {'name': 'cmake_language_server', 'lsp': 'stdio',
+        \ 'executable': 'cmake-language-server', 'command': '%e',
+        \ 'project_root': function('s:CMakeLspRoot'),
+        \ 'initialization_options': {b -> {'buildDirectory': s:CMakeBuildDir(b)}}})
+endfunction
+augroup vimzip_cmake_lsp
+  autocmd!
+  autocmd FileType cmake ++once call s:CMakeLsp()
+augroup END
 " plain checkers in place of a server that is off, or next to one (s:also); ALE skips missing ones
 let s:checkers = {'c': ['cc'], 'cpp': ['cc'], 'sh': ['shellcheck'], 'python': ['ruff', 'flake8'],
   \ 'go': ['gofmt', 'govet'], 'lua': ['luacheck'], 'typescript': ['eslint'], 'javascript': ['eslint']}
@@ -849,11 +858,13 @@ function! s:LspState(lang) abort
   let on = want is -1 ? !(s:lite && s:res.mem < 1024) : !!want
   return [on ? 'on' : 'off', found[0][1], found[0][0]]
 endfunction
+let s:lsp_done = {}
 function! s:LspSetup() abort
   let s:lsp_on = {}
   for lang in s:servers
     let [state, _, linter] = s:LspState(lang)
     for ft in lang[2]
+      let s:lsp_done[ft] = 1
       let g:ale_linters[ft] = state ==# 'on' ? [linter] + get(s:also, ft, []) : get(s:checkers, ft, [])
       if state ==# 'on'
         let s:lsp_on[ft] = linter
@@ -861,7 +872,28 @@ function! s:LspSetup() abort
     endfor
   endfor
 endfunction
+" (one language at a time, the first time a file of it opens: all of them at start, each looked
+" up on PATH, took 2 ms)
+function! s:LspFor(ft) abort
+  if has_key(s:lsp_done, a:ft)
+    return
+  endif
+  let s:lsp_done[a:ft] = 1
+  for lang in filter(copy(s:servers), 'index(v:val[2], a:ft) >= 0')
+    let [state, _, linter] = s:LspState(lang)
+    for ft in lang[2]
+      let s:lsp_done[ft] = 1
+      let g:ale_linters[ft] = state ==# 'on' ? [linter] + get(s:also, ft, []) : get(s:checkers, ft, [])
+      if state ==# 'on'
+        let s:lsp_on[ft] = linter
+      else
+        silent! call remove(s:lsp_on, ft)
+      endif
+    endfor
+  endfor
+endfunction
 function! s:LspHere() abort
+  call s:LspFor(&filetype)
   return has_key(s:lsp_on, &filetype)
 endfunction
 " the server's completion on Ctrl+x Ctrl+o
@@ -874,7 +906,7 @@ function! s:LspOmni(buf) abort
 endfunction
 augroup vimzip_lsp
   autocmd!
-  autocmd FileType * call s:LspOmni(bufnr(''))
+  autocmd FileType * call s:LspFor(&filetype) | call s:LspOmni(bufnr(''))
   " (ALE tells a buffer its server started when it is entered again, not quietly: a server that
   " started while the tree or a list was in front printed "No matching autocommands")
   autocmd User ALELSPStarted :
@@ -1468,6 +1500,19 @@ function! s:NERDTreeRenderInto(node, depth, drawText, out) abort
   endif
 endfunction
 function! s:FastNERDTree() abort
+  if exists('*nerdtree#echo') && !exists('s:nerdtree_echo')
+    let s:nerdtree_echo = 1
+    " (it redrew the whole screen to clear the command line after reading each folder: 4 ms as vim
+    " started, and a flash at each folder opened)
+    function! nerdtree#echo(msg) abort
+      if a:msg ==# ''
+        echo ''
+      else
+        redraw
+        echomsg 'NERDTree: ' . a:msg
+      endif
+    endfunction
+  endif
   if exists('g:NERDTreeDirNode') && exists('g:NERDTreeFileNode') && !exists('s:nerdtree_sort')
     let s:nerdtree_sort = g:NERDTreeDirNode.sortChildren
     let g:NERDTreeDirNode.sortChildren = function('s:NERDTreeSortChildren')
@@ -1519,8 +1564,16 @@ function! VimzipTreeCopy() abort
   endif
 endfunction
 
-" termdebug
+" termdebug, loaded when first used (at start it took 2.7 ms)
 let g:termdebug_config = {'wide': 1}
+function! s:TermdebugLoad(cmd) abort
+  silent! delcommand Termdebug
+  silent! delcommand TermdebugCommand
+  packadd termdebug
+  execute a:cmd
+endfunction
+command! -nargs=* -complete=file -bang Termdebug call s:TermdebugLoad('Termdebug<bang> ' . <q-args>)
+command! -nargs=+ -complete=file -bang TermdebugCommand call s:TermdebugLoad('TermdebugCommand<bang> ' . <q-args>)
 
 " ─── tab bar and status bar ──────────────────────────────────────────────────────────────────────
 " lightline draws only the tab bar; the status bar is ours (below)
@@ -1727,6 +1780,26 @@ function! s:BarCells(x, text, joins) abort
   endfor
   return cells
 endfunction
+" the branch, read from git's HEAD file (kept until it changes): FugitiveHead() loads all of
+" fugitive (7 ms at start) and took 0.7 ms for each of the status line's many redraws
+let s:heads = {}
+function! s:Head(b) abort
+  let dir = exists('*FugitiveActualDir') ? FugitiveActualDir(a:b) : ''
+  if dir ==# ''
+    return ''
+  endif
+  let f = dir . '/HEAD'
+  let stamp = [getftime(f), getfsize(f)]
+  let known = get(s:heads, dir, [[], ''])
+  if known[0] ==# stamp
+    return known[1]
+  endif
+  let line = get(readfile(f, '', 1), 0, '')
+  " (a detached HEAD: its commit, short, as VSCode shows)
+  let head = line =~# '^ref: refs/heads/' ? line[16 :] : line =~# '^ref: ' ? line[5 :] : line[: 6]
+  let s:heads[dir] = [stamp, head]
+  return head
+endfunction
 function! s:BarLayout() abort
   if exists('s:bar_now')
     return s:bar_now  " computed once per refresh for all the status lines (see s:BarRefresh)
@@ -1743,7 +1816,7 @@ function! s:BarLayout() abort
   let [name, group] = get(s:modes, mode(), [toupper(mode()), 'Normal'])
   let placed = [[1, s:BarCells(1, ' ' . name . ' ', joins), 'VimzipMode' . group]]
   let x = len(placed[0][1]) + 3
-  for item in [exists('*FugitiveHead') ? FugitiveHead(0, b) : '', VimzipProblems(b)]
+  for item in [s:Head(b), VimzipProblems(b)]
     if item !=# ''
       " (clicked: the branch switches branch, E / W opens the problems)
       call add(placed, [x, s:BarCells(x, item, joins), item =~# '^E \d' ? 'VimzipBarProblems' : 'VimzipBarBranch'])
@@ -1810,6 +1883,10 @@ function! s:BarJoins() abort
   endfor
 endfunction
 function! s:BarRefresh() abort
+  " (while vim starts, the session and the tree opening asked 7 times: once, when it has started)
+  if !get(s:, 'bar_on', 0)
+    return
+  endif
   unlet! s:bar_now
   let s:bar_now = s:BarLayout()
   call s:BarJoins()
@@ -2314,6 +2391,11 @@ function! s:Start() abort
   silent! argdelete *
   let s:session = s:SessionFile()
   if filereadable(s:session)
+    " (lightline worked out its colors again after a session loaded: 7 ms, for colors that had not
+    " changed)
+    silent! autocmd! lightline SessionLoadPost
+    " (and tagbar loaded all of itself, 3 ms, to bring back an outline the session never has)
+    silent! autocmd! TagbarSession
     execute 'silent! source' fnameescape(s:session)
     call s:DropGone()
   else
@@ -2749,6 +2831,7 @@ augroup vimzip
   autocmd VimEnter * call timer_start(5000, function('s:Prune'))
   autocmd VimEnter * call s:FastNERDTree()
   autocmd VimEnter * ++nested call s:Start()
+  autocmd VimEnter * let s:bar_on = 1 | call s:BarRefresh()
   autocmd VimEnter * call timer_start(0, {-> s:GitGutterOn()})
   autocmd VimEnter,BufWritePost * if !s:lite | call s:Words() | endif
   autocmd VimLeavePre * call s:SessionSave()
@@ -4906,7 +4989,6 @@ endif
 function! s:Light() abort
   let auto = s:res.cpus < 2 || s:res.mem < 1024
   let s:lite = exists('g:vimzip_lite') ? g:vimzip_lite : $VIMZIP_LITE !=# '' ? str2nr($VIMZIP_LITE) : auto
-  call s:LspSetup()
   if !s:lite
     return
   endif
