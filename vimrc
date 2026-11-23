@@ -1236,7 +1236,8 @@ function! s:QuitIfOnlyPanels() abort
   endif
   for w in range(1, winnr('$'))
     let b = winbufnr(w)
-    if index(['nerdtree', 'tagbar', 'vimziptimeline'], getbufvar(b, '&filetype')) < 0
+    " (the Markdown preview and the replace list belong to the file, as panels do)
+    if index(['nerdtree', 'tagbar', 'vimziptimeline', 'vimzipmdpreview', 'vimzipreplace'], getbufvar(b, '&filetype')) < 0
           \ && index(['terminal', 'quickfix'], getbufvar(b, '&buftype')) < 0 && b != s:tl.buf
       return
     endif
@@ -3123,8 +3124,8 @@ endfunction
 " Space cf: format the file (VSCode's Format Document) with the formatter of its language when one
 " is installed, else vim's reindent. Saving (Ctrl+s, :w; not the autosave while typing) formats too
 " where the project asks for it with the formatter's settings file (.clang-format, .prettierrc,
-" rustfmt.toml, [tool.ruff] or [tool.black] in pyproject.toml...), and Go and Zig files always
-" (gofmt / zig fmt being their own style). g:vimzip_format_on_save = 0 never, 1 whenever installed.
+" rustfmt.toml, [tool.ruff.format] or [tool.black] in pyproject.toml...), and Go and Zig files
+" always (gofmt / zig fmt being their own style). g:vimzip_format_on_save = 0 never, 1 whenever installed.
 let s:formatters = {'c': ['clang-format'], 'cpp': ['clang-format'], 'objc': ['clang-format'],
       \ 'cuda': ['clang-format'], 'java': ['google-java-format'], 'python': ['ruff', 'black'],
       \ 'go': ['gofmt'], 'rust': ['rustfmt'], 'sh': ['shfmt'], 'bash': ['shfmt'], 'lua': ['stylua'],
@@ -3171,7 +3172,7 @@ function! s:FormatWanted(prog) abort
     return 1
   endif
   let dir = expand('%:p:h')
-  let files = {'clang-format': ['.clang-format', '_clang-format'], 'ruff': ['ruff.toml', '.ruff.toml'],
+  let files = {'clang-format': ['.clang-format', '_clang-format'],
         \ 'rustfmt': ['rustfmt.toml', '.rustfmt.toml'], 'stylua': ['stylua.toml', '.stylua.toml'],
         \ 'cmake-format': ['.cmake-format', '.cmake-format.py', '.cmake-format.yaml', '.cmake-format.json'],
         \ 'prettier': ['.prettierrc', '.prettierrc.json', '.prettierrc.yaml', '.prettierrc.yml',
@@ -3182,11 +3183,17 @@ function! s:FormatWanted(prog) abort
       return 1
     endif
   endfor
-  " (or a section in the project's own file)
-  let section = {'ruff': '^\[tool\.ruff', 'black': '^\[tool\.black\]', 'prettier': '"prettier"\s*:'}
-  let in = a:prog ==# 'prettier' ? 'package.json' : 'pyproject.toml'
-  let f = has_key(section, a:prog) ? findfile(in, dir . ';') : ''
-  return f !=# '' && match(readfile(f), section[a:prog]) >= 0
+  " (or a section in the project's own file; ruff's settings are often for its checks only, so its
+  " format section)
+  let section = {'ruff': '^\[\(tool\.ruff\.\)\=format\]', 'black': '^\[tool\.black\]', 'prettier': '"prettier"\s*:'}
+  let in = {'prettier': ['package.json'], 'ruff': ['pyproject.toml', 'ruff.toml', '.ruff.toml'], 'black': ['pyproject.toml']}
+  for name in get(in, a:prog, [])
+    let f = findfile(name, dir . ';')
+    if f !=# '' && match(readfile(f), section[a:prog]) >= 0
+      return 1
+    endif
+  endfor
+  return 0
 endfunction
 function! s:Format(saving) abort
   if &buftype !=# '' || !&modifiable || exists('b:vimzip_view')
