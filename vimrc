@@ -451,6 +451,7 @@ autocmd BufReadPost /usr/* setlocal readonly nomodifiable
 " CMake Tools does. Other projects without one get their folders with headers as include paths.
 " g:vimzip_cmake = 0 turns both off.
 let s:cmake = {}
+let s:cmake_later = []  " (files opened while vim starts: looked at once it has, see s:Started)
 function! s:CMakeRoot(file) abort
   " the topmost folder with a CMakeLists.txt, up to the git work tree's root
   let dir = fnamemodify(a:file, ':p:h')
@@ -695,7 +696,8 @@ endfunction
 augroup vimzip_cmake
   autocmd!
   autocmd FileType c call s:CppHeader()
-  autocmd FileType c,cpp,objc,objcpp,cuda call s:CMake(str2nr(expand('<abuf>')))
+  autocmd FileType c,cpp,objc,objcpp,cuda if get(s:, 'bar_on', 0) | call s:CMake(str2nr(expand('<abuf>')))
+        \ | else | call add(s:cmake_later, str2nr(expand('<abuf>'))) | endif
   autocmd BufWritePost CMakeLists.txt,*.cmake call s:CMakeSaved(expand('<afile>:p'))
 augroup END
 
@@ -2832,6 +2834,7 @@ augroup vimzip
   autocmd VimEnter * call s:FastNERDTree()
   autocmd VimEnter * ++nested call s:Start()
   autocmd VimEnter * let s:bar_on = 1 | call s:BarRefresh()
+  autocmd VimEnter * call timer_start(0, {-> s:Started()})
   autocmd VimEnter * call timer_start(0, {-> s:GitGutterOn()})
   autocmd VimEnter,BufWritePost * if !s:lite | call s:Words() | endif
   autocmd VimLeavePre * call s:SessionSave()
@@ -5001,6 +5004,26 @@ function! s:Light() abort
   let g:ale_cpp_clangd_options = g:ale_c_clangd_options
 endfunction
 call s:Light()
+" while vim starts, ALE's check of the files opening and the look at their CMake project wait for
+" the first screen (12 ms and 5 ms before anything showed)
+let s:lint_on_enter = get(g:, 'ale_lint_on_enter', 1)
+let g:ale_lint_on_enter = 0
+function! s:Started() abort
+  let g:ale_lint_on_enter = s:lint_on_enter
+  for b in s:cmake_later
+    if bufexists(b)
+      call s:CMake(b)
+    endif
+  endfor
+  let s:cmake_later = []
+  if s:lint_on_enter && exists('g:loaded_ale')
+    for b in uniq(sort(tabpagebuflist()))
+      if getbufvar(b, '&buftype') ==# ''
+        call ale#Queue(0, 'lint_file', b)
+      endif
+    endfor
+  endif
+endfunction
 function! s:Info() abort
   echo printf('CPUs %.1f, free memory %d MB: %s mode', s:res.cpus, s:res.mem, s:lite ? 'light' : 'full')
   echo printf('rg threads %d, line blame %s, lint %s', s:jobs,
