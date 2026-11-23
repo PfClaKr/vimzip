@@ -2011,8 +2011,29 @@ function! s:KeepPanel(win, buf) abort
   execute 'buffer' a:buf
 endfunction
 
+" :e on a folder: that folder opened in the tree, not an empty tab named after it (whose autosave
+" then failed: "is a directory")
+function! s:OpenDir(buf) abort
+  if !bufexists(a:buf) || !isdirectory(bufname(a:buf))
+    return
+  endif
+  let dir = substitute(fnamemodify(bufname(a:buf), ':p'), '.\zs/$', '', '')
+  call s:BufClose(a:buf, '')
+  execute 'silent! bwipeout' a:buf
+  " under the project's root: shown open there; outside it: as the tree's root
+  if dir ==# getcwd()
+    NERDTreeFocus
+  elseif stridx(dir, getcwd() . '/') == 0
+    execute 'NERDTreeFind' fnameescape(dir . '/')
+  else
+    execute 'NERDTree' fnameescape(dir)
+  endif
+endfunction
+
 augroup vimzip
   autocmd!
+  autocmd BufEnter * if v:vim_did_enter && &buftype ==# '' && isdirectory(expand('<afile>'))
+        \ | let s:dirbuf = str2nr(expand('<abuf>')) | call timer_start(0, {-> s:OpenDir(s:dirbuf)}) | endif
   autocmd BufEnter * let s:enter = [win_getid(), bufnr('')] | call timer_start(0, {-> s:KeepPanel(s:enter[0], s:enter[1])})
   autocmd VimEnter * call timer_start(5000, function('s:Prune'))
   autocmd VimEnter * call s:FastNERDTree()
