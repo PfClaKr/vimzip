@@ -444,6 +444,11 @@ function! s:CMake(buf) abort
   if !get(g:, 'vimzip_cmake', 1) || getbufvar(a:buf, '&buftype') !=# '' || file =~# '^/usr/'
     return
   endif
+  " (a project with a compile_commands.json of its own needs neither; one vimzip made is not its own)
+  if empty(getbufvar(a:buf, 'ale_c_build_dir_names')) && exists('g:loaded_ale')
+        \ && !empty(ale#c#FindCompileCommands(a:buf)[1])
+    return
+  endif
   let root = executable('cmake') ? s:CMakeRoot(file) : ''
   if root ==# ''
     " no CMake: a project without a compile_commands.json gets its folders with headers as include
@@ -451,7 +456,7 @@ function! s:CMake(buf) abort
     let git = finddir('.git', fnamemodify(file, ':h') . ';')
     let git = git !=# '' ? git : findfile('.git', fnamemodify(file, ':h') . ';')
     let root = git !=# '' ? fnamemodify(git, ':p:h:h') : stridx(file, getcwd() . '/') == 0 ? getcwd() : ''
-    if root ==# '' || root ==# expand('~') || (exists('*ale#c#FindCompileCommands') && !empty(ale#c#FindCompileCommands(a:buf)[1]))
+    if root ==# '' || root ==# expand('~')
       return
     endif
     let dir = s:cache . '/cmake/' . s:CacheName(root, '')
@@ -473,7 +478,7 @@ function! s:CMake(buf) abort
 endfunction
 function! s:CMakeUse(buf, dir) abort
   " (the project's own compile_commands.json, if it has one, still comes first)
-  if exists('*ale#c#FindCompileCommands') && empty(getbufvar(a:buf, 'ale_c_build_dir_names'))
+  if exists('g:loaded_ale') && empty(getbufvar(a:buf, 'ale_c_build_dir_names'))
         \ && !empty(ale#c#FindCompileCommands(a:buf)[1])
     return
   endif
@@ -666,7 +671,7 @@ function! s:SysTags() abort
   let src = expand('%:p')
   let dirs = uniq(sort([expand('%:p:h'), expand('%:p:h:h') . '/include', getcwd(), getcwd() . '/include']))
   " the build's own flags (compile_commands.json from CMake etc.) via ALE, then guessed dirs
-  let flags = exists('*ale#c#GetCFlags') ? ale#c#GetCFlags(bufnr(''), []) : ''
+  let flags = exists('g:loaded_ale') ? ale#c#GetCFlags(bufnr(''), []) : ''
   let out = system(cc . ' -M -MG -w ' . flags . ' ' . join(map(dirs, '"-I" . shellescape(v:val)')) . ' ' . shellescape(src))
   let hdrs = filter(split(out), 'v:val =~# "^/" && v:val !=# src')
   if empty(hdrs) | return 0 | endif
@@ -685,7 +690,7 @@ endfunction
 " compiler looks (its list asked once)
 function! s:IncludeFile(name) abort
   " (the folders the build gives this file, CMake's included: headers deeper in the project)
-  let args = exists('*ale#c#GetCFlags') ? split(ale#c#GetCFlags(bufnr(''), [])) : []
+  let args = exists('g:loaded_ale') ? split(ale#c#GetCFlags(bufnr(''), [])) : []
   let flags = []
   for i in range(len(args))
     let d = matchstr(args[i], '^-\%(I\|isystem\|iquote\)\zs.*')
@@ -2921,7 +2926,7 @@ nmap ]e <Plug>(ale_next_wrap)
 nmap [e <Plug>(ale_previous_wrap)
 " (on a line without one: a word saying so, not nothing at all)
 function! s:ErrorDetail() abort
-  if exists('*ale#util#FindItemAtCursor') && empty(ale#util#FindItemAtCursor(bufnr(''))[1])
+  if exists('g:loaded_ale') && empty(ale#util#FindItemAtCursor(bufnr(''))[1])
     echo 'No error or warning on this line'
   else
     ALEDetail
@@ -3105,7 +3110,7 @@ function! s:Info() abort
   echo printf('cache %d MB in %s (old entries are removed daily)', s:CacheSize(), fnamemodify(s:cache, ':~'))
   if &filetype =~# '^\(c\|cpp\|objc\|objcpp\|cuda\)$'
     " where this file's include paths come from
-    let own = exists('*ale#c#FindCompileCommands') ? ale#c#FindCompileCommands(bufnr(''))[1] : ''
+    let own = exists('g:loaded_ale') ? ale#c#FindCompileCommands(bufnr(''))[1] : ''
     let ours = get(get(b:, 'ale_c_build_dir_names', []), 0, '')
     let root = s:CMakeRoot(expand('%:p'))
     let job = get(get(s:cmake, root, {}), 'job', test_null_job())
