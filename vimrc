@@ -1574,6 +1574,9 @@ let s:languages = {'c': 'C', 'cpp': 'C++', 'python': 'Python', 'sh': 'Shell Scri
   \ 'json': 'JSON', 'yaml': 'YAML', 'javascript': 'JavaScript', 'typescript': 'TypeScript', 'go': 'Go',
   \ 'rust': 'Rust', 'java': 'Java', 'lua': 'Lua', 'html': 'HTML', 'css': 'CSS', 'xml': 'XML', 'sql': 'SQL',
   \ 'dockerfile': 'Dockerfile', 'gitcommit': 'Git Commit', 'gitignore': 'Ignore', 'text': 'Plain Text',
+  \ 'cs': 'C#', 'php': 'PHP', 'typescriptreact': 'TypeScript JSX', 'javascriptreact': 'JavaScript JSX',
+  \ 'objc': 'Objective-C', 'objcpp': 'Objective-C++', 'cuda': 'CUDA C++', 'toml': 'TOML', 'scss': 'SCSS',
+  \ 'dosini': 'Ini', 'tex': 'LaTeX', 'gitconfig': 'Git Config', 'jsonc': 'JSON with Comments',
   \ 'vimzipimage': 'Image', 'vimzippdf': 'PDF'}
 function! VimzipProblems(...) abort
   let b = a:0 ? a:1 : bufnr('')
