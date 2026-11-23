@@ -312,7 +312,71 @@ function! s:Theme(name) abort
   endif
 endfunction
 command! -bar -nargs=? -complete=customlist,VimzipThemes Theme call s:Theme(<q-args>)
-silent! colorscheme habamax
+" code in VSCode's Dark+ colors (colors/vimzip.vim); :colorscheme habamax (or any other) in
+" ~/.config/vimzip/vimrc for vim's own look
+silent! colorscheme vimzip
+
+" what vim's syntax files leave alike, told apart as VSCode does: function names (before a
+" parenthesis), members (after . or ->), types (CamelCase in languages with classes, t_x / x_t in
+" C), CONSTANTS, and the other names as variables. Keywords stay keywords: vim's :syntax keyword
+" always wins over a match.
+let s:code_syntax = {'c': 'c', 'cpp': 'cpp', 'java': 'class', 'cs': 'pascal', 'kotlin': 'class',
+      \ 'scala': 'class', 'swift': 'class', 'dart': 'class', 'php': 'class', 'python': 'class',
+      \ 'rust': 'class', 'javascript': 'class', 'typescript': 'ts', 'javascriptreact': 'class',
+      \ 'typescriptreact': 'ts', 'go': 'pascal', 'lua': '', 'zig': ''}
+" words that are keywords there although the syntax file matches them some other way
+let s:code_skip = {
+      \ 'lua': 'and\|break\|do\|else\|elseif\|end\|false\|for\|function\|goto\|if\|in\|local\|nil\|not\|or\|repeat\|return\|then\|true\|until\|while',
+      \ 'cs': 'class\|struct\|interface\|enum\|record\|namespace\|delegate\|event',
+      \ 'zig': '[iuf]\d\+\|usize\|isize\|bool\|void\|type\|anyerror\|anytype\|noreturn\|comptime_int\|comptime_float',
+      \ 'go': 'package\|import\|const\|var\|type\|func\|struct\|interface\|map\|chan\|go\|defer\|select\|range\|return\|if\|else\|for\|switch\|case\|default\|break\|continue\|goto\|fallthrough'}
+function! s:CodeSyntax() abort
+  let kind = get(s:code_syntax, &syntax, -1)
+  if kind is -1 || exists('b:vimzip_view')
+    return
+  endif
+  if kind ==# 'ts'
+    " TypeScript's syntax names most things itself (see colors/vimzip.vim); its plain names and
+    " properties are transparent, so the colors go inside them
+    syntax match vimzipVariable /\<\h\w*\>/ display contained containedin=typescriptIdentifierName
+    syntax match vimzipMember /\<\h\w*\>/ display contained containedin=typescriptProp
+    syntax match vimzipFunction /\<\h\w*\ze\s*(/ display contained containedin=typescriptIdentifierName,typescriptProp,typescriptMember
+    syntax match vimzipConstant /\<\u[A-Z0-9_]\+\>/ display contained containedin=typescriptIdentifierName,typescriptVariableDeclaration
+    " (and its names for the methods and properties of the DOM, console, arrays...)
+    for g in getcompletion('typescript', 'highlight')
+      if g =~# '\a\(Method\|Prop\)$'
+        let to = g =~# 'Method$' ? 'vimzipFunction' : 'vimzipMember'
+        execute 'highlight! link' g to
+      endif
+    endfor
+  else
+    let skip = has_key(s:code_skip, &syntax) ? '\%(\<\%(' . s:code_skip[&syntax] . '\)\>\)\@!' : ''
+    execute 'syntax match vimzipVariable /' . skip . '\<\h\w*\>/ display'
+    if kind ==# 'pascal'
+      " (Go, C#: functions are CamelCase too; a call stays a function)
+      syntax match vimzipType /\<\u\w*\l\w*\>/ display
+    endif
+    syntax match vimzipMember /\%(\.\|->\)\s*\zs\h\w*\>/ display
+    execute 'syntax match vimzipFunction /' . skip . '\<\h\w*\ze\s*(/ display'
+    if kind ==# 'class' || kind ==# 'cpp'
+      syntax match vimzipType /\<\u\w*\l\w*\>/ display
+    endif
+    if kind ==# 'c' || kind ==# 'cpp'
+      syntax match vimzipType /\<\%([ts]_\h\w*\|\h\w*_t\)\>/ display
+    endif
+    if kind ==# 'cpp'
+      syntax match vimzipType /\<\h\w*\ze::/ display
+    endif
+    syntax match vimzipConstant /\<\u[A-Z0-9_]\+\>/ display
+  endif
+  highlight default link vimzipFunction Function
+  highlight default link vimzipType Type
+  highlight default link vimzipConstant Constant
+endfunction
+augroup vimzip_code
+  autocmd!
+  autocmd Syntax * call s:CodeSyntax()
+augroup END
 
 " clipboard over SSH (OSC 52): yanks also go to the local clipboard
 set clipmethod=osc52
