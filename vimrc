@@ -2383,6 +2383,11 @@ endif
 function! s:Refs() abort
   if s:LspHere()
     ALEFindReferences
+  elseif expand('<cword>') =~# '^\w\+$'
+    " the whole word only: calc should not list every calc_add and calc_eval
+    let w = expand('<cword>')
+    call s:EditWin()
+    call s:Find('\b' . w . '\b', 0)
   else
     call s:FindText(expand('<cword>'))
   endif
