@@ -401,7 +401,11 @@ let g:ale_hover_to_floating_preview = 1
 let g:ale_floating_window_border = ['│', '─', '╭', '╮', '╯', '╰', '│', '─']
 
 " system headers: read-only, no linting
-let g:ale_pattern_options = {'^/usr/': {'ale_enabled': 0}}
+" and none for git's views of a file (fugitive://..., the history window "repo --follow -- x.c"):
+" named like C files, they started a language server and were gone before it answered, an error
+" (E680) when a git key was pressed right after vim started
+let g:ale_pattern_options = {'^/usr/': {'ale_enabled': 0}, '^\a\+://': {'ale_enabled': 0},
+      \ ' -- ': {'ale_enabled': 0}}
 autocmd BufReadPost /usr/* setlocal readonly nomodifiable
 
 " CMake projects: their include paths and defines come from CMake. A project that does not keep a
