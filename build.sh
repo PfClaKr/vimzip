@@ -20,7 +20,7 @@ cp vim install.sh "$D/"
 cp vimzip-files vimzip-ctags "$D/bin/"
 # pictures and PDF text for vim (see "images and PDFs" in the vimrc)
 (cd tools/vimzip-view && CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$D/bin/vimzip-view" .)
-cp -r autoload themes "$D/"
+cp -r autoload colors themes "$D/"
 
 # smoke test + help tags
 VIMZIP=$D VIMRUNTIME=$D/runtime "$D/bin/vim" -u "$D/vimrc" -i NONE -es \

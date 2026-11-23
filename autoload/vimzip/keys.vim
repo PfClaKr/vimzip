@@ -13,6 +13,8 @@ let s:vimzip = [
       \   ['Space fb  Space fr', 'open files / recent files'],
       \   ['Space ft', 'function or struct by name'],
       \   ['Space fp', 'open another project'],
+      \   ['', 'Ctrl+a add, Ctrl+x remove'],
+      \   ['', 'Ctrl+e edit the list'],
       \   ['>', 'in the search window'],
       \   ['Enter', 'open'],
       \   ['Ctrl+v  Ctrl+x', 'open beside / below'],
@@ -184,6 +186,7 @@ let s:plugin_cmds = [
       \ ['vimzip', [
       \   [':VimzipInfo', 'CPUs, memory, light or full mode'],
       \   [':Lsp  :Lsp rust off', 'language servers: list, switch'],
+      \   [':CMake', 'read include paths from CMake again'],
       \   [':Find text', 'search the project'],
       \   [':Project path', 'open another project'],
       \   [':Theme name', 'status bar colors (:Theme lists)']]],

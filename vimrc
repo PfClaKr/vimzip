@@ -4,7 +4,7 @@ set nocompatible
 let &packpath = $VIMZIP . ',' . $VIMRUNTIME
 let &runtimepath = $VIMZIP . ',' . $VIMRUNTIME . ',' . $VIMRUNTIME . '/after'
 let s:cache = expand('~/.cache/vimzip')
-for s:d in ['undo', 'sessions', 'tags', 'systags', 'words', 'backup']
+for s:d in ['undo', 'sessions', 'tags', 'systags', 'words', 'backup', 'cmake']
   silent! call mkdir(s:cache . '/' . s:d, 'p')
 endfor
 " a cache file named after a path ('/' as '%'), or after a hash of it when that name would be too
@@ -312,7 +312,71 @@ function! s:Theme(name) abort
   endif
 endfunction
 command! -bar -nargs=? -complete=customlist,VimzipThemes Theme call s:Theme(<q-args>)
-silent! colorscheme habamax
+" code in VSCode's Dark+ colors (colors/vimzip.vim); :colorscheme habamax (or any other) in
+" ~/.config/vimzip/vimrc for vim's own look
+silent! colorscheme vimzip
+
+" what vim's syntax files leave alike, told apart as VSCode does: function names (before a
+" parenthesis), members (after . or ->), types (CamelCase in languages with classes, t_x / x_t in
+" C), CONSTANTS, and the other names as variables. Keywords stay keywords: vim's :syntax keyword
+" always wins over a match.
+let s:code_syntax = {'c': 'c', 'cpp': 'cpp', 'java': 'class', 'cs': 'pascal', 'kotlin': 'class',
+      \ 'scala': 'class', 'swift': 'class', 'dart': 'class', 'php': 'class', 'python': 'class',
+      \ 'rust': 'class', 'javascript': 'class', 'typescript': 'ts', 'javascriptreact': 'class',
+      \ 'typescriptreact': 'ts', 'go': 'pascal', 'lua': '', 'zig': ''}
+" words that are keywords there although the syntax file matches them some other way
+let s:code_skip = {
+      \ 'lua': 'and\|break\|do\|else\|elseif\|end\|false\|for\|function\|goto\|if\|in\|local\|nil\|not\|or\|repeat\|return\|then\|true\|until\|while',
+      \ 'cs': 'class\|struct\|interface\|enum\|record\|namespace\|delegate\|event',
+      \ 'zig': '[iuf]\d\+\|usize\|isize\|bool\|void\|type\|anyerror\|anytype\|noreturn\|comptime_int\|comptime_float',
+      \ 'go': 'package\|import\|const\|var\|type\|func\|struct\|interface\|map\|chan\|go\|defer\|select\|range\|return\|if\|else\|for\|switch\|case\|default\|break\|continue\|goto\|fallthrough'}
+function! s:CodeSyntax() abort
+  let kind = get(s:code_syntax, &syntax, -1)
+  if kind is -1 || exists('b:vimzip_view')
+    return
+  endif
+  if kind ==# 'ts'
+    " TypeScript's syntax names most things itself (see colors/vimzip.vim); its plain names and
+    " properties are transparent, so the colors go inside them
+    syntax match vimzipVariable /\<\h\w*\>/ display contained containedin=typescriptIdentifierName
+    syntax match vimzipMember /\<\h\w*\>/ display contained containedin=typescriptProp
+    syntax match vimzipFunction /\<\h\w*\ze\s*(/ display contained containedin=typescriptIdentifierName,typescriptProp,typescriptMember
+    syntax match vimzipConstant /\<\u[A-Z0-9_]\+\>/ display contained containedin=typescriptIdentifierName,typescriptVariableDeclaration
+    " (and its names for the methods and properties of the DOM, console, arrays...)
+    for g in getcompletion('typescript', 'highlight')
+      if g =~# '\a\(Method\|Prop\)$'
+        let to = g =~# 'Method$' ? 'vimzipFunction' : 'vimzipMember'
+        execute 'highlight! link' g to
+      endif
+    endfor
+  else
+    let skip = has_key(s:code_skip, &syntax) ? '\%(\<\%(' . s:code_skip[&syntax] . '\)\>\)\@!' : ''
+    execute 'syntax match vimzipVariable /' . skip . '\<\h\w*\>/ display'
+    if kind ==# 'pascal'
+      " (Go, C#: functions are CamelCase too; a call stays a function)
+      syntax match vimzipType /\<\u\w*\l\w*\>/ display
+    endif
+    syntax match vimzipMember /\%(\.\|->\)\s*\zs\h\w*\>/ display
+    execute 'syntax match vimzipFunction /' . skip . '\<\h\w*\ze\s*(/ display'
+    if kind ==# 'class' || kind ==# 'cpp'
+      syntax match vimzipType /\<\u\w*\l\w*\>/ display
+    endif
+    if kind ==# 'c' || kind ==# 'cpp'
+      syntax match vimzipType /\<\%([ts]_\h\w*\|\h\w*_t\)\>/ display
+    endif
+    if kind ==# 'cpp'
+      syntax match vimzipType /\<\h\w*\ze::/ display
+    endif
+    syntax match vimzipConstant /\<\u[A-Z0-9_]\+\>/ display
+  endif
+  highlight default link vimzipFunction Function
+  highlight default link vimzipType Type
+  highlight default link vimzipConstant Constant
+endfunction
+augroup vimzip_code
+  autocmd!
+  autocmd Syntax * call s:CodeSyntax()
+augroup END
 
 " clipboard over SSH (OSC 52): yanks also go to the local clipboard
 set clipmethod=osc52
@@ -339,6 +403,157 @@ let g:ale_floating_window_border = ['│', '─', '╭', '╮', '╯', '╰', '�
 " system headers: read-only, no linting
 let g:ale_pattern_options = {'^/usr/': {'ale_enabled': 0}}
 autocmd BufReadPost /usr/* setlocal readonly nomodifiable
+
+" CMake projects: their include paths and defines come from CMake. A project that does not keep a
+" compile_commands.json of its own (cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON) gets one in
+" the cache, made in the background the first time one of its C/C++ files opens, and again after a
+" CMakeLists.txt is saved; the checks (ALE's cc) and clangd then find its headers, as VSCode's
+" CMake Tools does. Other projects without one get their folders with headers as include paths.
+" g:vimzip_cmake = 0 turns both off.
+let s:cmake = {}
+function! s:CMakeRoot(file) abort
+  " the topmost folder with a CMakeLists.txt, up to the git work tree's root
+  let dir = fnamemodify(a:file, ':p:h')
+  let git = finddir('.git', dir . ';')
+  let git = git !=# '' ? git : findfile('.git', dir . ';')
+  let stop = git !=# '' ? fnamemodify(git, ':p:h:h') : '/'
+  let found = ''
+  while 1
+    if filereadable(dir . '/CMakeLists.txt')
+      let found = dir
+    endif
+    if dir ==# stop || dir ==# fnamemodify(dir, ':h')
+      return found
+    endif
+    let dir = fnamemodify(dir, ':h')
+  endwhile
+endfunction
+function! s:CMake(buf) abort
+  let file = fnamemodify(bufname(a:buf), ':p')
+  if !get(g:, 'vimzip_cmake', 1) || getbufvar(a:buf, '&buftype') !=# '' || file =~# '^/usr/'
+    return
+  endif
+  let root = executable('cmake') ? s:CMakeRoot(file) : ''
+  if root ==# ''
+    " no CMake: a project without a compile_commands.json gets its folders with headers as include
+    " paths (clangd found none at all, ALE's checks only an include/ at the root)
+    let git = finddir('.git', fnamemodify(file, ':h') . ';')
+    let git = git !=# '' ? git : findfile('.git', fnamemodify(file, ':h') . ';')
+    let root = git !=# '' ? fnamemodify(git, ':p:h:h') : stridx(file, getcwd() . '/') == 0 ? getcwd() : ''
+    if root ==# '' || root ==# expand('~') || (exists('*ale#c#FindCompileCommands') && !empty(ale#c#FindCompileCommands(a:buf)[1]))
+      return
+    endif
+    let dir = s:cache . '/cmake/' . s:CacheName(root, '')
+    if filereadable(dir . '/compile_commands.json')
+      call s:CMakeUse(a:buf, dir)
+    endif
+    if !has_key(s:cmake, root)  " (made again once a session: new folders)
+      let s:cmake[root] = {'job': s:GuessJob(root, dir)}
+    endif
+    return
+  endif
+  let dir = s:cache . '/cmake/' . s:CacheName(root, '')
+  if filereadable(dir . '/compile_commands.json')
+    call s:CMakeUse(a:buf, dir)
+  endif
+  if !filereadable(dir . '/compile_commands.json') || getftime(root . '/CMakeLists.txt') > getftime(dir . '/compile_commands.json')
+    call s:CMakeConfigure(root, dir)
+  endif
+endfunction
+function! s:CMakeUse(buf, dir) abort
+  " (the project's own compile_commands.json, if it has one, still comes first)
+  if exists('*ale#c#FindCompileCommands') && empty(getbufvar(a:buf, 'ale_c_build_dir_names'))
+        \ && !empty(ale#c#FindCompileCommands(a:buf)[1])
+    return
+  endif
+  call setbufvar(a:buf, 'ale_c_build_dir_names', [a:dir])
+endfunction
+function! s:CMakeConfigure(root, dir) abort
+  if job_status(get(get(s:cmake, a:root, {}), 'job', test_null_job())) ==# 'run'
+    return
+  endif
+  call mkdir(a:dir, 'p')
+  let log = a:dir . '/vimzip-cmake.log'
+  let cmd = (s:lite ? ['nice', '-n', '10'] : []) + ['cmake', '-S', a:root, '-B', a:dir,
+        \ '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', '-Wno-dev']
+  let s:cmake[a:root] = {'job': job_start(cmd, {'in_io': 'null', 'out_io': 'file', 'out_name': log,
+        \ 'err_io': 'out', 'exit_cb': {_, status -> s:CMakeDone(a:root, a:dir, status)}})}
+endfunction
+function! s:CMakeDone(root, dir, status) abort
+  let made = a:status == 0 && filereadable(a:dir . '/compile_commands.json')
+  if !made
+    " (a package it needs is missing, ...): the project's folders with headers instead, as VSCode
+    " does without one (${workspaceFolder}/**); :CMake tries again
+    let guessed = s:GuessIncludes(a:root, a:dir)
+    echohl WarningMsg
+    echomsg 'CMake could not configure ' . fnamemodify(a:root, ':~') . (guessed ? ' (include paths guessed)' : '')
+          \ . ': see ' . fnamemodify(a:dir, ':~') . '/vimzip-cmake.log, :CMake to retry'
+    echohl None
+    if !guessed
+      return
+    endif
+  endif
+  let again = []
+  for b in getbufinfo({'bufloaded': 1})
+    if getbufvar(b.bufnr, '&filetype') =~# '^\(c\|cpp\|objc\|objcpp\|cuda\)$' && stridx(b.name, a:root . '/') == 0
+      call s:CMakeUse(b.bufnr, a:dir)
+      call add(again, b.bufnr)
+    endif
+  endfor
+  " a clangd started before this has the old flags: it starts again with the new ones
+  silent! ALEStopLSP clangd
+  for b in again
+    silent! call ale#Queue(0, 'lint_file', b)
+  endfor
+endfunction
+" a compile_commands.json with the folders that hold headers (and their parents, for "lib/x.h")
+" as include paths, one entry per source folder (clangd and ALE use it for the folder's other files)
+function! s:GuessJob(root, dir) abort
+  let files = []
+  return job_start(['rg', '--files', '-t', 'c', '-t', 'cpp', '-t', 'h', a:root], {'in_io': 'null', 'err_io': 'null',
+        \ 'out_cb': {_, l -> add(files, l)}, 'close_cb': {_ -> s:GuessIncludes(a:root, a:dir, files) ? s:CMakeDone(a:root, a:dir, 0) : 0}})
+endfunction
+function! s:GuessIncludes(root, dir, ...) abort
+  let files = a:0 ? a:1 : systemlist('rg --files -t c -t cpp -t h ' . shellescape(a:root))
+  let hdr = '\.\(h\|hh\|hpp\|hxx\|inl\)$'
+  let incs = {}
+  for f in filter(copy(files), 'v:val =~? hdr')
+    let d = fnamemodify(f, ':h')
+    let incs[d] = 1
+    if stridx(fnamemodify(d, ':h'), a:root) == 0
+      let incs[fnamemodify(d, ':h')] = 1
+    endif
+  endfor
+  let dirs = {}
+  for f in filter(files, 'v:val !~? hdr')
+    let dirs[fnamemodify(f, ':h')] = f
+  endfor
+  if empty(dirs) || len(incs) > 300 || len(dirs) > 2000
+    return 0
+  endif
+  call mkdir(a:dir, 'p')
+  let flags = map(sort(keys(incs)), '"-I" . v:val')
+  let db = map(values(dirs), {_, f -> {'directory': a:root, 'file': f,
+        \ 'arguments': [f =~? '\.c$' ? 'cc' : 'c++'] + flags + ['-c', f]}})
+  call writefile([json_encode(db)], a:dir . '/compile_commands.json')
+  return 1
+endfunction
+function! s:CMakeHere() abort
+  let root = s:CMakeRoot(expand('%:p'))
+  if root ==# ''
+    echo 'No CMakeLists.txt above this file'
+    return
+  endif
+  call s:CMakeConfigure(root, s:cache . '/cmake/' . s:CacheName(root, ''))
+  echo 'CMake: configuring ' . fnamemodify(root, ':~') . ' for its include paths...'
+endfunction
+command! -bar CMake call s:CMakeHere()
+augroup vimzip_cmake
+  autocmd!
+  autocmd FileType c,cpp,objc,objcpp,cuda call s:CMake(str2nr(expand('<abuf>')))
+  autocmd BufWritePost CMakeLists.txt,*.cmake if s:CMakeRoot(expand('<afile>:p')) !=# ''
+        \ | call s:CMakeConfigure(s:CMakeRoot(expand('<afile>:p')), s:cache . '/cmake/' . s:CacheName(s:CMakeRoot(expand('<afile>:p')), '')) | endif
+augroup END
 
 " tags for the system headers the current C/C++ file includes (via cc -M)
 function! s:SysTags() abort
@@ -426,7 +641,18 @@ let s:servers = [
   \   [['tsserver', 'tsserver', 'npm install -g typescript']]],
   \ ['lua', 'Lua', ['lua'], [['lua_language_server', 'lua-language-server', 'install lua-language-server']]],
   \ ['bash', 'Bash', ['sh'], [['language_server', 'bash-language-server', 'npm install -g bash-language-server']]],
-  \ ['zig', 'Zig', ['zig'], [['zls', 'zls', 'install zls']]]]
+  \ ['zig', 'Zig', ['zig'], [['zls', 'zls', 'install zls']]],
+  \ ['cmake', 'CMake', ['cmake'], [['cmake_language_server', 'cmake-language-server', "pip install cmake-language-server 'pygls<2'"]]]]
+" (ALE has no CMake server of its own: commands' help on K, completion, in CMakeLists.txt; it reads
+" the targets from the build vimzip made for the project, see "CMake projects")
+function! s:CMakeLspRoot(buffer) abort
+  let root = s:CMakeRoot(fnamemodify(bufname(a:buffer), ':p'))
+  return root !=# '' ? root : fnamemodify(bufname(a:buffer), ':p:h')
+endfunction
+silent! call ale#linter#Define('cmake', {'name': 'cmake_language_server', 'lsp': 'stdio',
+      \ 'executable': 'cmake-language-server', 'command': '%e',
+      \ 'project_root': function('s:CMakeLspRoot'),
+      \ 'initialization_options': {b -> {'buildDirectory': s:cache . '/cmake/' . s:CacheName(s:CMakeLspRoot(b), '')}}})
 " plain checkers in place of a server that is off, or next to one (s:also); ALE skips missing ones
 let s:checkers = {'c': ['cc'], 'cpp': ['cc'], 'sh': ['shellcheck'], 'python': ['ruff', 'flake8'],
   \ 'go': ['gofmt', 'govet'], 'lua': ['luacheck'], 'typescript': ['eslint'], 'javascript': ['eslint']}
@@ -1992,17 +2218,74 @@ function! s:OpenProject(dir) abort
   call lightline#update()
 endfunction
 
-" recent projects = folders that have a saved session, newest first
+" Space fp: the projects listed in ~/.config/vimzip/projects (added with Ctrl+a, or by editing the
+" file with Ctrl+e: one folder per line, in that order), then the recent ones (folders with a saved
+" session, newest first). Ctrl+x takes one off the list (out of the file, and hidden from the
+" recent ones until it is opened again).
+let s:projects_file = expand('~/.config/vimzip/projects')
+let s:projects_hidden = s:cache . '/projects-hidden'
+function! s:ReadList(file) abort
+  return filereadable(a:file) ? map(filter(readfile(a:file), 'v:val !~# "^\\s*\\(#\\|$\\)"'), 'fnamemodify(expand(trim(v:val)), ":p:s?/$??")') : []
+endfunction
+function! s:WriteList(file, dirs) abort
+  call mkdir(fnamemodify(a:file, ':h'), 'p')
+  let head = a:file ==# s:projects_file ? ['# vimzip projects (Space fp): one folder per line, listed first in this order'] : []
+  call writefile(head + map(copy(a:dirs), 'fnamemodify(v:val, ":~")'), a:file)
+endfunction
 function! s:RecentProjects() abort
+  let listed = s:ReadList(s:projects_file)
+  let hidden = s:ReadList(s:projects_hidden)
   let files = glob(s:cache . '/sessions/*.vim', 0, 1)
   call sort(files, {a, b -> getftime(b) - getftime(a)})
-  let dirs = map(files, {_, f -> s:SessionDir(f)})
-  return map(filter(dirs, {_, d -> isdirectory(d) && d !=# getcwd()}), {_, d -> fnamemodify(d, ':~')})
+  let recent = filter(map(files, {_, f -> s:SessionDir(f)}), {_, d -> index(listed, d) < 0 && index(hidden, d) < 0})
+  return map(filter(listed + recent, {_, d -> isdirectory(d) && d !=# getcwd()}), {_, d -> fnamemodify(d, ':~')})
 endfunction
 function! s:PickProject() abort
-  call fzf#run(fzf#wrap({'source': s:RecentProjects(), 'sink': function('s:OpenProject'),
-        \ 'options': ['--prompt', 'Project> ', '--header', 'recent projects (or type a path)',
-        \             '--bind', 'enter:accept-or-print-query']}))
+  call fzf#run(fzf#wrap({'source': s:RecentProjects(), 'sink*': function('s:PickedProject'),
+        \ 'options': ['--prompt', 'Project> ', '--print-query', '--expect', 'ctrl-a,ctrl-x,ctrl-e',
+        \   '--header', 'Enter open (or a typed path)   Ctrl+a add   Ctrl+x remove   Ctrl+e edit the list',
+        \   '--bind', 'enter:accept-or-print-query']}))
+endfunction
+function! s:PickedProject(lines) abort
+  let [query, key] = [get(a:lines, 0, ''), get(a:lines, 1, '')]
+  let picked = filter(a:lines[2:], 'v:val !=# ""')
+  let dirs = map(empty(picked) ? (query ==# '' ? [] : [query]) : picked, 'fnamemodify(expand(trim(v:val)), ":p:s?/$??")')
+  if key ==# 'ctrl-e'
+    if !filereadable(s:projects_file)
+      call s:WriteList(s:projects_file, [])
+    endif
+    call s:Buf('edit ' . fnameescape(s:projects_file))
+    return
+  elseif key ==# 'ctrl-a' || key ==# 'ctrl-x'
+    let listed = s:ReadList(s:projects_file)
+    let hidden = s:ReadList(s:projects_hidden)
+    for d in dirs
+      if key ==# 'ctrl-a'
+        if !isdirectory(d)
+          echohl WarningMsg | echo 'Not a folder: ' . fnamemodify(d, ':~') | echohl None
+          return
+        endif
+        call filter(listed, 'v:val !=# d')
+        call add(listed, d)
+        call filter(hidden, 'v:val !=# d')
+      else
+        call filter(listed, 'v:val !=# d')
+        call add(hidden, d)
+      endif
+    endfor
+    call s:WriteList(s:projects_file, listed)
+    call s:WriteList(s:projects_hidden, uniq(sort(hidden)))
+    call timer_start(0, {-> s:PickProject()})  " the list again, changed
+    return
+  endif
+  if !empty(dirs)
+    " (opened again: no longer hidden)
+    let hidden = s:ReadList(s:projects_hidden)
+    if index(hidden, dirs[0]) >= 0
+      call s:WriteList(s:projects_hidden, filter(hidden, 'v:val !=# dirs[0]'))
+    endif
+    call s:OpenProject(dirs[0])
+  endif
 endfunction
 command! -nargs=? -complete=dir Project if <q-args> ==# '' | call s:PickProject() | else | call s:OpenProject(<q-args>) | endif
 
@@ -2114,12 +2397,13 @@ function! s:Prune(...) abort
         \      ['systags/*.tags', 90, {f -> Hashed(f) || filereadable(Path(f))}],
         \      ['tags/*-tags', 90, {f -> 1}],
         \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}],
-        \      ['backup/*', 7, {f -> 0}]]
+        \      ['backup/*', 7, {f -> 0}],
+        \      ['cmake/*', 90, {f -> Hashed(f) || isdirectory(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}]]
   for [pat, days, Exists] in rules
     for f in glob(s:cache . '/' . pat, 1, 1)
       let age = (localtime() - getftime(f)) / day
       if age > days || (age > min([days, 30]) && !Exists(f))
-        call delete(f)
+        call delete(f, isdirectory(f) ? 'rf' : '')
       endif
     endfor
   endfor

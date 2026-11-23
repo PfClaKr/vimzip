@@ -50,15 +50,27 @@ On a small machine (under 2 CPUs or 1 GB of free memory, container limits includ
 light: less work in the background, line blame off until `Space gb`. `:VimzipInfo` shows what it
 found; `let g:vimzip_lite = 0` (or `1`) decides for it.
 
-`:Theme` lists the status bar themes and `:Theme nord` tries one.
+`Space fp` lists your projects: the ones you added (`Ctrl+a` adds the typed folder, `Ctrl+e` edits
+the list, `~/.config/vimzip/projects`), then the recently opened ones; `Ctrl+x` takes one off.
+
+`:Theme` lists the status bar themes and `:Theme nord` tries one. Code is colored like VSCode's
+Dark+ (functions, variables, types and constants apart); `colorscheme habamax` (or any other) in
+the vimrc gives vim's own look.
 
 Language servers give errors, `gd`, `gr`, `K` and completion (`Ctrl+x Ctrl+o`). vimzip uses one
 when it is installed: clangd (C/C++), rust-analyzer, pyright or pylsp (Python), gopls, dart (Dart
-and Flutter), tsserver (TypeScript/JS), lua-language-server, bash-language-server and zls.
-`:Lsp` (or `Space cl`) lists them and turns one on or off; `:Lsp rust off` does it directly, and
-the choice is kept. Defaults can go in the vimrc: `let g:vimzip_lsp = {'python': 'pylsp', 'go': 0}`.
-For CMake projects, `cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON` gives clangd the build's
-include paths.
+and Flutter), tsserver (TypeScript/JS), lua-language-server, bash-language-server, zls and
+cmake-language-server (CMakeLists.txt). `:Lsp` (or `Space cl`) lists them and turns one on or off;
+`:Lsp rust off` does it directly, and the choice is kept. Defaults can go in the vimrc:
+`let g:vimzip_lsp = {'python': 'pylsp', 'go': 0}`.
+
+C/C++ projects built with CMake get their include paths and defines from it: when the project has
+no `compile_commands.json` of its own, vimzip configures it in the background (into its cache, the
+project folder stays as it is) the first time a C/C++ file opens, and again after a `CMakeLists.txt`
+is saved. If CMake fails (a missing package), the project's folders with headers are used instead
+and `:CMake` tries again; so are they for projects without CMake (as VSCode's default include path
+does). A project's own `compile_commands.json` always comes first. `let g:vimzip_cmake = 0` turns
+this off.
 
 ## Update and uninstall
 
