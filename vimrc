@@ -1546,6 +1546,12 @@ function! s:Click() abort
     let lnum = get(ruler.target, r, r * ruler.n / ruler.h + 1)
     return ":\<C-u>call win_gotoid(" . ruler.win . ")|call cursor(" . lnum . ", 1)|normal! ^zz\<CR>"
   endif
+  " a sticky line over a window's top: to that line (as VSCode)
+  let sticky = get(get(s:, 'sticky_at', {}), m.winid, [])
+  if !empty(sticky)
+    let lnum = get(sticky[1], m.winrow - 1, sticky[1][-1])
+    return ":\<C-u>call win_gotoid(" . sticky[0] . ")|call cursor(" . lnum . ", 1)|normal! ^zt\<CR>"
+  endif
   if m.screenrow != 1 || m.winid
     return "\<LeftMouse>"
   endif
@@ -1578,7 +1584,8 @@ function! s:Click() abort
 endfunction
 nnoremap <silent> <expr> <LeftMouse> <SID>Click()
 function! s:InsertClick() abort
-  return has_key(get(s:, 'ruler_info', {}), getmousepos().winid) ? "\<Esc>" . s:Click() : "\<LeftMouse>"
+  let w = getmousepos().winid
+  return has_key(get(s:, 'ruler_info', {}), w) || has_key(get(s:, 'sticky_at', {}), w) ? "\<Esc>" . s:Click() : "\<LeftMouse>"
 endfunction
 inoremap <silent> <expr> <LeftMouse> <SID>InsertClick()
 let g:NERDTreeMouseMode = 3
@@ -3471,7 +3478,9 @@ function! s:ConflictMarks() abort
   for [start, base, mid, end] in found
     for l in range(start, end)
       let kind = index([start, base, mid, end], l) >= 0 ? 'Mark' : l < (base ? base : mid) ? 'Current' : l > mid ? 'Incoming' : 'Mark'
-      call sign_place(0, 'vimzip_conflict', 'VimzipConflict' . kind, bufnr(''), {'lnum': l, 'priority': 5})
+      " (as high as ALE's marks, which then show too; over git's, which would hide the colors of a
+      " file git tracks, every line of a conflict being a change)
+      call sign_place(0, 'vimzip_conflict', 'VimzipConflict' . kind, bufnr(''), {'lnum': l, 'priority': get(g:, 'ale_sign_priority', 30)})
     endfor
     call prop_add(start, 0, {'type': 'vimzip_conflict', 'text_align': 'above',
           \ 'text': 'Accept Current (Space mc) │ Accept Incoming (Space mi) │ Accept Both (Space mb)'})
@@ -3717,7 +3726,8 @@ function! s:Replace(text) abort
   endif
   redraw
   call s:QuietWrite('wall')
-  let out = systemlist('rg -n -H --no-heading --color=never --fixed-strings --case-sensitive --max-columns=500 -- '
+  " (the files the search looks in: hidden ones too, not .git; long lines shown in part)
+  let out = systemlist('rg -n -H --no-heading --color=never --fixed-strings --case-sensitive --hidden --glob "!.git" -- '
         \ . shellescape(find) . ' .')
   let matches = []
   for l in out
@@ -3743,6 +3753,12 @@ function! s:Replace(text) abort
   for [f, l, t] in matches
     let n += 1
     let head = f . ':' . l . ': '
+    if len(t) > 300
+      " (cut at characters, not bytes: half a Hangul letter showed as junk)
+      let pre = strpart(t, 0, stridx(t, find))
+      let t = (strchars(pre) > 60 ? '…' . strcharpart(pre, strchars(pre) - 60) : pre) . strpart(t, len(pre))
+      let t = strcharpart(t, 0, 300) . '…'
+    endif
     " the line as it will be: each match shown crossed out, followed by its replacement
     let parts = split(t, '\V' . escape(find, '\'), 1)
     let shown = head . parts[0]
@@ -3852,12 +3868,13 @@ endfunction
 function! s:PairOpen(ch) abort
   let line = getline('.')
   let next = line[col('.') - 1]
-  let prev = col('.') > 1 ? line[col('.') - 2] : ''
-  if !s:PairsOn() || &filetype =~# get(s:no_pair, a:ch, '^$') || next !~# '^\%(\s\|[)\]}>,;:.=]\|\)$'
+  " (the whole character before: a byte of a Hangul letter is no letter)
+  let prev = matchstr(strpart(line, 0, col('.') - 1), '.$')
+  if !s:PairsOn() || (has_key(s:no_pair, a:ch) && &filetype =~# s:no_pair[a:ch]) || next !~# '^\%(\s\|[)\]}>,;:.=]\|\)$'
     return a:ch
   endif
   " (a quote right after a letter or another quote is an apostrophe or a closing one)
-  if a:ch =~# '[''"`]' && prev =~# '\w\|[''"`\\]'
+  if a:ch =~# '[''"`]' && prev =~# '\k\|[''"`\\]'
     return a:ch
   endif
   return a:ch . s:pairs[a:ch] . "\<C-g>U\<Left>"
@@ -3896,7 +3913,7 @@ inoremap <expr> <silent> <CR> <SID>PairCR()
 function! s:WordMark() abort
   let word = &buftype ==# '' && mode() ==# 'n' && get(g:, 'vimzip_word_highlight', 1) ? expand('<cword>') : ''
   " (a name, under the cursor: not the next word on the line, not a number or punctuation)
-  if word !~# '^\k*\a\k*$' || getline('.')[col('.') - 1] !~# '\k'
+  if word !~# '^\k\+$' || word =~# '^[0-9_]\+$' || matchstr(getline('.'), '\%' . col('.') . 'c.') !~# '\k'
     let word = ''
   endif
   " (nor a keyword: every int or return lit up)
@@ -4081,6 +4098,15 @@ function! s:StickyHeads(w) abort
   " (only what is out of view: each head line covers one at the top)
   return filter(heads, 'v:val < top + v:key')
 endfunction
+function! s:Untab(text, ts) abort
+  let parts = split(a:text, '\t', 1)
+  let out = ''
+  for part in parts[: -2]
+    let out .= part
+    let out .= repeat(' ', a:ts - strdisplaywidth(out) % a:ts)
+  endfor
+  return out . parts[-1]
+endfunction
 function! s:Sticky(...) abort
   let w = a:0 ? a:1 : win_getid()
   let b = winbufnr(w)
@@ -4101,7 +4127,9 @@ function! s:Sticky(...) abort
   endif
   let nw = getwinvar(w, '&number') ? max([getwinvar(w, '&numberwidth'), len(line('$', w)) + 1]) : 0
   let sign = getwinvar(w, '&signcolumn') ==# 'no' ? 0 : 2
-  let lines = map(copy(heads), {_, l -> repeat(' ', sign) . (nw ? printf('%*d ', nw - 1, l) : '') . getbufline(b, l)[0]})
+  " (tabs laid out from the text's start, as in the window: after the line number they shifted)
+  let ts = getbufvar(b, '&tabstop')
+  let lines = map(copy(heads), {_, l -> repeat(' ', sign) . (nw ? printf('%*d ', nw - 1, l) : '') . s:Untab(getbufline(b, l)[0], ts)})
   let [row, col] = win_screenpos(w)
   let opts = {'line': row, 'col': col, 'minwidth': winwidth(w) - 1, 'maxwidth': winwidth(w) - 1,
         \ 'highlight': 'VimzipSticky', 'zindex': 40, 'wrap': 0}
@@ -4112,6 +4140,8 @@ function! s:Sticky(...) abort
     let id = popup_create(lines, opts)
     let s:sticky[w] = id
   endif
+  let s:sticky_at = filter(get(s:, 'sticky_at', {}), 'index(values(s:sticky), str2nr(v:key)) >= 0')
+  let s:sticky_at[id] = [w, heads]
   " (colored as the file is)
   if getbufvar(winbufnr(id), '&syntax') !=# getbufvar(b, '&syntax')
     call setbufvar(winbufnr(id), '&syntax', getbufvar(b, '&syntax'))
@@ -4141,8 +4171,10 @@ function! s:ViewNow() abort
       call s:Sticky(w)
     endif
   endfor
+  " (a window that is gone: its lines too; one on another tab page keeps them for coming back, a
+  " popup there cannot be closed from here, and a new one each time piled up)
   for w in keys(s:sticky)
-    if index(here, str2nr(w)) < 0
+    if win_id2tabwin(str2nr(w)) == [0, 0]
       call popup_close(remove(s:sticky, w))
     endif
   endfor
@@ -4403,9 +4435,23 @@ function! s:GitPanel(what) abort
   setlocal winfixheight nonumber nocursorline signcolumn=no nolist
   call setbufvar(buf, '&buflisted', 0)
   let s:git_panel = buf
-  " (focus stays with the files, unless git has a question)
+  " (focus stays with the files, unless git has a question: a user name, password or passphrase,
+  " typed into the panel)
   call win_gotoid(from)
   call s:Layout()
+  call timer_start(300, function('s:GitPanelAsks', [buf]), {'repeat': -1})
+endfunction
+function! s:GitPanelAsks(buf, timer) abort
+  if !bufexists(a:buf) || term_getstatus(a:buf) !~# 'running'
+    call timer_stop(a:timer)
+    return
+  endif
+  let last = get(filter(getbufline(a:buf, 1, '$'), 'v:val =~# "\\S"'), -1, '')
+  if last =~? '\(username\|password\|passphrase\|token\|yes/no\|(y/n)\|PIN\).*[:?]\s*$' && bufwinid(a:buf) > 0
+    call timer_stop(a:timer)
+    call win_gotoid(bufwinid(a:buf))
+    echo 'git asks: type the answer in the panel'
+  endif
 endfunction
 function! s:GitPanelDone(buf, cmd, status) abort
   if a:status == 0 && bufexists(a:buf)
@@ -4632,7 +4678,15 @@ function! s:MdPreview() abort
     autocmd! * <buffer>
     autocmd TextChanged,TextChangedI <buffer> call s:MdLater(bufnr(''))
     autocmd CursorMoved,CursorMovedI <buffer> call s:MdFollow(bufnr(''))
+    " (and closes with its file)
+    autocmd BufUnload,BufDelete <buffer> call s:MdClose(str2nr(expand('<abuf>')))
   augroup END
+endfunction
+function! s:MdClose(src) abort
+  let pv = getbufvar(a:src, 'vimzip_md_preview', -1)
+  if bufexists(pv)
+    call timer_start(0, {-> bufexists(pv) ? execute('silent! bwipeout ' . pv) : 0})
+  endif
 endfunction
 function! s:MdLater(src) abort
   call timer_stop(getbufvar(a:src, 'vimzip_md_timer', -1))
