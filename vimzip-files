@@ -1,7 +1,8 @@
 #!/bin/sh
-# Source files for the tags index, run in the project root.
+# Source files for the tags index, run in the project root (languages ctags reads).
 # Projects with more than 30000 of them leave out test directories.
-set -- -j "${VIMZIP_JOBS:-0}" -t c -t cpp -t py -t sh -t go -t rust -t java -t js -t ts -t lua -t vim -t cmake
+set -- -j "${VIMZIP_JOBS:-0}" -t c -t cpp -t py -t sh -t go -t rust -t java -t js -t ts -t lua -t vim -t cmake \
+  -t kotlin -t ruby -t php -t csharp -t perl -t elixir -t haskell
 if [ "$(rg --files "$@" | head -n 30001 | wc -l)" -gt 30000 ]; then
   set -- "$@" -g '!**/test/**' -g '!**/tests/**'
 fi

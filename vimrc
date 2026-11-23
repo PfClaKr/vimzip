@@ -1719,6 +1719,7 @@ endfunction
 " Ctrl+N: also offer words from the git project's source files. rg collects them in the background
 " into a sorted file and each completion greps it, so vim's memory stays flat on huge projects.
 let s:src_types = ' -t c -t cpp -t h -t py -t sh -t cmake -t make -t go -t rust -t java -t js -t ts -t lua -t vim -t md'
+      \ . ' -t dart -t zig -t kotlin -t swift -t ruby -t php -t csharp -t scala -t elixir -t haskell -t perl'
 function! s:Words() abort
   if (exists('s:words_job') && job_status(s:words_job) ==# 'run') || localtime() - get(s:, 'words_at', 0) < 60
     return
