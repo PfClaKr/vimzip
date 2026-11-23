@@ -493,6 +493,7 @@ function! s:CMakeDone(root, dir, status) abort
       return
     endif
   endif
+  call s:HeaderEntries(a:root, a:dir . '/compile_commands.json')
   let again = []
   for b in getbufinfo({'bufloaded': 1})
     if getbufvar(b.bufnr, '&filetype') =~# '^\(c\|cpp\|objc\|objcpp\|cuda\)$' && stridx(b.name, a:root . '/') == 0
@@ -538,6 +539,59 @@ function! s:GuessIncludes(root, dir, ...) abort
   call writefile([json_encode(db)], a:dir . '/compile_commands.json')
   return 1
 endfunction
+" a header opened in a folder without sources (include/uv.h) has no entry to take its flags from:
+" each such folder gets the flags of the nearest source (ALE's checks; clangd guesses by itself)
+function! s:HeaderEntries(root, json) abort
+  if getfsize(a:json) <= 0 || getfsize(a:json) > 8000000
+    return
+  endif
+  try
+    let db = json_decode(join(readfile(a:json), ''))
+  catch
+    return
+  endtry
+  " (from sources in the project's main language: a C++ header copying a C test's flags was C)
+  let cxx = '\.\(cc\|cpp\|cxx\|c++\|C\|mm\)$'
+  let lang = len(filter(copy(db), 'v:val.file =~# cxx')) * 2 > len(db) ? cxx : '\.\(c\|m\)$'
+  let have = {}
+  for e in db
+    let have[fnamemodify(e.file =~# '^/' ? e.file : e.directory . '/' . e.file, ':h')] = e
+  endfor
+  let from = filter(copy(have), 'v:val.file =~# lang')
+  let from = empty(from) ? have : from
+  let dirs = uniq(sort(map(systemlist('rg --files -g "*.{h,hh,hpp,hxx,inl}" ' . shellescape(a:root)), 'fnamemodify(v:val, ":h")')))
+  let added = 0
+  for d in filter(dirs, '!has_key(have, v:val)')[: 1999]
+    " the nearest: the source folder sharing the longest part of the path (not a test's, if as near)
+    let [best, len] = [{}, -1]
+    for [sd, e] in items(from)
+      let n = 0
+      while n < len(d) && n < len(sd) && d[n] ==# sd[n]
+        let n += 1
+      endwhile
+      let n = n * 2 + (sd =~# '/tests\=\(/\|$\)' ? 0 : 1)
+      if n > len
+        let [best, len] = [e, n]
+      endif
+    endfor
+    if empty(best)
+      break
+    endif
+    let e = deepcopy(best)
+    let file = d . '/vimzip-headers.' . fnamemodify(best.file, ':e')
+    if has_key(e, 'arguments')
+      call map(e.arguments, 'v:val ==# best.file ? file : v:val')
+    elseif has_key(e, 'command')
+      let e.command = substitute(e.command, '\V' . escape(best.file, '\'), escape(file, '&\'), 'g')
+    endif
+    let e.file = file
+    call add(db, e)
+    let added += 1
+  endfor
+  if added
+    call writefile([json_encode(db)], a:json)
+  endif
+endfunction
 function! s:CMakeHere() abort
   let root = s:CMakeRoot(expand('%:p'))
   if root ==# ''
@@ -548,8 +602,30 @@ function! s:CMakeHere() abort
   echo 'CMake: configuring ' . fnamemodify(root, ':~') . ' for its include paths...'
 endfunction
 command! -bar CMake call s:CMakeHere()
+" a .h with no C++ in its first lines is C to vim; in a project of mostly C++ sources it is C++
+" (fmt's format.h: checked as C, "'type_traits' file not found")
+let s:cpp_project = {}
+function! s:CppHeader() abort
+  if expand('<afile>:e') !=# 'h' || &buftype !=# ''
+    return
+  endif
+  let file = expand('<afile>:p')
+  let git = finddir('.git', fnamemodify(file, ':h') . ';')
+  let root = git !=# '' ? fnamemodify(git, ':p:h:h') : fnamemodify(file, ':h')
+  if !has_key(s:cpp_project, root)
+    let n = {}
+    for ext in ['c', 'cpp']
+      let n[ext] = len(systemlist('rg --files -t ' . ext . ' -g "!*.h" ' . shellescape(root) . ' | head -n 5000'))
+    endfor
+    let s:cpp_project[root] = n.cpp > n.c
+  endif
+  if s:cpp_project[root]
+    setlocal filetype=cpp
+  endif
+endfunction
 augroup vimzip_cmake
   autocmd!
+  autocmd FileType c call s:CppHeader()
   autocmd FileType c,cpp,objc,objcpp,cuda call s:CMake(str2nr(expand('<abuf>')))
   autocmd BufWritePost CMakeLists.txt,*.cmake if s:CMakeRoot(expand('<afile>:p')) !=# ''
         \ | call s:CMakeConfigure(s:CMakeRoot(expand('<afile>:p')), s:cache . '/cmake/' . s:CacheName(s:CMakeRoot(expand('<afile>:p')), '')) | endif
@@ -2985,6 +3061,25 @@ function! s:Info() abort
   let on = map(filter(copy(s:servers), 's:LspState(v:val)[0] ==# "on"'), 'v:val[1] . " (" . s:LspState(v:val)[1] . ")"')
   echo 'language servers: ' . (empty(on) ? 'none on' : join(on, ', ')) . ' (:Lsp to change)'
   echo printf('cache %d MB in %s (old entries are removed daily)', s:CacheSize(), fnamemodify(s:cache, ':~'))
+  if &filetype =~# '^\(c\|cpp\|objc\|objcpp\|cuda\)$'
+    " where this file's include paths come from
+    let own = exists('*ale#c#FindCompileCommands') ? ale#c#FindCompileCommands(bufnr(''))[1] : ''
+    let ours = get(get(b:, 'ale_c_build_dir_names', []), 0, '')
+    let root = s:CMakeRoot(expand('%:p'))
+    let job = get(get(s:cmake, root, {}), 'job', test_null_job())
+    if job_status(job) ==# 'run'
+      echo 'include paths: CMake is configuring ' . fnamemodify(root, ':~') . '...'
+    elseif own !=# '' && (ours ==# '' || stridx(own, ours) != 0)
+      echo 'include paths: the project''s ' . fnamemodify(own, ':~')
+    elseif ours !=# ''
+      let log = ours . '/vimzip-cmake.log'
+      let ok = filereadable(log) && match(readfile(log), 'Build files have been written') >= 0
+      echo 'include paths: ' . (root ==# '' ? 'guessed (folders with headers, no CMake)'
+            \ : ok ? 'from CMake' : 'guessed (CMake failed, see ' . fnamemodify(log, ':~') . ', :CMake retries)')
+    else
+      echo 'include paths: none found yet (' . (root ==# '' ? 'no CMakeLists.txt' : 'CMake not run') . ')'
+    endif
+  endif
   if s:lite
     echo 'g:vimzip_lite = 0 in ~/.config/vimzip/vimrc turns light mode off'
   endif
