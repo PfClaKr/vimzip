@@ -1825,6 +1825,9 @@ command! -nargs=? -complete=dir Project if <q-args> ==# '' | call s:PickProject(
 
 function! s:TermOpen(buf) abort
   call setbufvar(a:buf, '&buflisted', 0)
+  " any terminal, also one from :terminal, ends with vim, like vimzip's own (++kill=hup): :qa or
+  " :q in the last file stopped at E947 "Job still running", leaving the tree and the terminal
+  call term_setkill(a:buf, 'hup')
   if bufnr('') == a:buf
     setlocal nonumber nocursorline signcolumn=no
   endif
