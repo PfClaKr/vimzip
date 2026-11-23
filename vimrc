@@ -1348,13 +1348,23 @@ function! s:Buf(cmd) abort
 endfunction
 function! s:CloseBuf() abort
   call s:EditWin()
-  let b = bufnr('')
-  if len(getbufinfo({'buflisted': 1})) > 1
-    bprevious
-  else
-    enew
-  endif
-  execute 'silent! bdelete' b
+  call s:BufClose(bufnr(''), '')
+endfunction
+" close a tab (buffer): every window showing it shows another tab first, or one empty tab, since
+" :bdelete closes those windows (the same file open in two splits lost one of them)
+function! s:BufClose(b, bang) abort
+  let blank = -1
+  for w in win_findbuf(a:b)
+    if len(getbufinfo({'buflisted': 1})) > 1
+      call win_execute(w, 'bprevious')
+    elseif blank < 0
+      call win_execute(w, 'enew')
+      let blank = winbufnr(w)
+    else
+      call win_execute(w, 'buffer ' . blank)
+    endif
+  endfor
+  execute 'silent! bdelete' . a:bang a:b
 endfunction
 
 " :q closes the current tab (buffer) like VSCode while other tabs are open; the last one quits.
@@ -1379,9 +1389,7 @@ function! s:Quit(bang) abort
     execute 'quit' . (a:bang ? '!' : '')
     return
   endif
-  let b = bufnr('')
-  bprevious
-  execute 'bdelete' . (a:bang ? '!' : '') b
+  call s:BufClose(bufnr(''), a:bang ? '!' : '')
   redrawtabline
 endfunction
 command! -bang VimzipQuit call s:Quit(<bang>0)
