@@ -272,6 +272,22 @@ function! s:Highlights() abort
   endif
   highlight VimzipTitle ctermfg=250 ctermbg=235 guifg=#bbbbbb guibg=#252526 cterm=NONE gui=NONE
   highlight! link VimzipBarProblems VimzipBar
+  highlight! link VimzipBarBranch VimzipBar
+  " the word under the cursor elsewhere, brackets by depth, sticky lines, peek, Markdown preview
+  highlight VimzipWord ctermbg=237 guibg=#343a40 cterm=NONE gui=NONE
+  highlight VimzipBracket1 ctermfg=220 guifg=#ffd700
+  highlight VimzipBracket2 ctermfg=170 guifg=#da70d6
+  highlight VimzipBracket3 ctermfg=39 guifg=#179fff
+  highlight VimzipSticky ctermbg=235 guibg=#252526
+  highlight VimzipPeekLine ctermbg=237 guibg=#2f3a45
+  highlight VimzipMdH1 ctermfg=75 guifg=#4fc1ff cterm=bold gui=bold
+  highlight VimzipMdH2 ctermfg=75 guifg=#4fc1ff cterm=bold gui=bold
+  highlight VimzipMdBold cterm=bold gui=bold
+  highlight VimzipMdItalic cterm=italic gui=italic
+  highlight VimzipMdCode ctermfg=174 ctermbg=236 guifg=#ce9178 guibg=#2d2d2d
+  highlight VimzipMdLink ctermfg=75 guifg=#3794ff cterm=underline gui=underline
+  highlight VimzipMdDim ctermfg=241 guifg=#5a5a5a
+  highlight VimzipMdBlock ctermbg=235 guibg=#252526
   " several places at once (Ctrl+n), find and replace, merge conflicts
   highlight VimzipMulti ctermfg=231 ctermbg=24 guifg=#ffffff guibg=#264f78 cterm=NONE gui=NONE
   highlight VimzipReplaceOld ctermfg=210 ctermbg=52 guifg=#f48771 guibg=#4b1818 cterm=strikethrough gui=strikethrough
@@ -1671,7 +1687,9 @@ function! VimzipStatus() abort
       " half of a wide character cut off by the window's edge
       if part[0] ==# '' | let part[0] = ' ' | endif
       if get(cells, stop - x + 1, 'x') ==# '' | let part[-1] = ' ' | endif
-      let [click, unclick] = group ==# 'VimzipBarProblems' && has('statusline_click') ? ['%[VimzipProblemsClick]', '%[]'] : ['', '']
+      let click = !has('statusline_click') ? '' : group ==# 'VimzipBarProblems' ? '%[VimzipProblemsClick]'
+            \ : group ==# 'VimzipBarBranch' ? '%[VimzipBranchClick]' : ''
+      let unclick = click !=# '' ? '%[]' : ''
       let out .= repeat(' ', start - pos) . click . '%#' . group . '#' . s:Esc(join(part, '')) . '%#VimzipBar#' . unclick
       let pos = stop + 1
     endif
@@ -1719,8 +1737,8 @@ function! s:BarLayout() abort
   let x = len(placed[0][1]) + 3
   for item in [exists('*FugitiveHead') ? FugitiveHead(0, b) : '', VimzipProblems(b)]
     if item !=# ''
-      " (E / W opens the problems when clicked)
-      call add(placed, [x, s:BarCells(x, item, joins), item =~# '^E \d' ? 'VimzipBarProblems' : 'VimzipBar'])
+      " (clicked: the branch switches branch, E / W opens the problems)
+      call add(placed, [x, s:BarCells(x, item, joins), item =~# '^E \d' ? 'VimzipBarProblems' : 'VimzipBarBranch'])
       let x += len(placed[-1][1]) + 2
     endif
   endfor
@@ -1979,7 +1997,8 @@ function! s:Kind(n) abort
   let b = winbufnr(a:n)
   let ft = getbufvar(b, '&filetype')
   return ft ==# 'nerdtree' ? 'tree' : ft ==# 'tagbar' ? 'tagbar' : ft ==# 'vimziptimeline' ? 'timeline'
-        \ : b == get(s:, 'ai', -1) ? 'ai' : b == get(s:, 'term', -1) || b == get(s:, 'build', -1) ? 'term' : ''
+        \ : b == get(s:, 'ai', -1) ? 'ai'
+        \ : index([get(s:, 'term', -1), get(s:, 'build', -1), get(s:, 'git_panel', -1)], b) >= 0 ? 'term' : ''
 endfunction
 function! s:PanelSize(kind) abort
   let default = {'tree': min([30, max([20, &columns / 4])]), 'tagbar': min([40, max([24, &columns * 3 / 10])]),
@@ -2549,7 +2568,7 @@ function! s:TermOpen(buf) abort
   " :q in the last file stopped at E947 "Job still running", leaving the tree and the terminal
   call term_setkill(a:buf, 'hup')
   if bufnr('') == a:buf
-    setlocal nonumber nocursorline signcolumn=no
+    setlocal nonumber nocursorline signcolumn=no nolist
   endif
 endfunction
 
@@ -2979,7 +2998,6 @@ nnoremap <silent> <leader>fw :call <SID>FindText(expand('<cword>'))<CR>
 xnoremap <silent> <leader>fw <Esc>:call <SID>FindText(<SID>Selection())<CR>
 nnoremap <silent> <leader>fb :call <SID>Buf('Buffers')<CR>
 nnoremap <silent> <leader>fr :call <SID>Buf('History')<CR>
-nnoremap <silent> <leader>ft :call <SID>Buf('Tags')<CR>
 nnoremap <silent> <leader>fp :call <SID>PickProject()<CR>
 function! s:Selection() abort
   return join(getregion(getpos("'<"), getpos("'>"), {'type': visualmode()}), "\n")
@@ -3386,7 +3404,7 @@ function! s:Build() abort
   if bufexists(blank) && blank != s:build
     execute 'silent! bwipeout' blank
   endif
-  setlocal winfixheight nonumber nocursorline signcolumn=no
+  setlocal winfixheight nonumber nocursorline signcolumn=no nolist
   call setbufvar(s:build, '&buflisted', 0)
   let s:set[win_getid()] = winheight(0)
   call win_gotoid(from)
@@ -3714,7 +3732,7 @@ function! s:Replace(text) abort
   endif
   call s:EditWin()
   execute 'botright' max([8, min([&lines / 2, len(matches) + 2])]) 'new'
-  setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted nowrap nonumber nocursorline signcolumn=no
+  setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted nowrap nonumber nocursorline signcolumn=no nolist
   setlocal filetype=vimzipreplace
   silent file [Replace]
   let b:vimzip_replace = {'find': find, 'with': with}
@@ -3818,6 +3836,848 @@ nnoremap <silent> <leader>mb :call <SID>Resolve('both')<CR>
 nnoremap <silent> ]x :call <SID>NextConflict(0)<CR>
 nnoremap <silent> [x :call <SID>NextConflict(1)<CR>
 
+" ─── typing and reading aids ─────────────────────────────────────────────────────────────────────
+" brackets and quotes close themselves (VSCode's auto closing pairs): ( gives (), typing ) before a
+" ) steps over it, Backspace in () deletes both, Enter in {} opens a line between. Only before a
+" blank, the line's end or a closing bracket, and a quote not right after a letter (don't);
+" g:vimzip_autopairs = 0 turns it off
+let s:pairs = {'(': ')', '[': ']', '{': '}', '"': '"', "'": "'", '`': '`'}
+" (languages where a quote is not a pair: Rust's lifetimes 'a, Lisp's 'x, prose's apostrophes;
+" vim script's comments start with ")
+let s:no_pair = {"'": '^\(rust\|lisp\|scheme\|clojure\|racket\|text\|markdown\|gitcommit\|tex\|ocaml\)$',
+      \ '"': '^vim$', '`': '^\(c\|cpp\|python\|java\|rust\|lua\|vim\|text\|gitcommit\)$'}
+function! s:PairsOn() abort
+  return get(g:, 'vimzip_autopairs', 1) && &buftype ==# '' && !&paste
+endfunction
+function! s:PairOpen(ch) abort
+  let line = getline('.')
+  let next = line[col('.') - 1]
+  let prev = col('.') > 1 ? line[col('.') - 2] : ''
+  if !s:PairsOn() || &filetype =~# get(s:no_pair, a:ch, '^$') || next !~# '^\%(\s\|[)\]}>,;:.=]\|\)$'
+    return a:ch
+  endif
+  " (a quote right after a letter or another quote is an apostrophe or a closing one)
+  if a:ch =~# '[''"`]' && prev =~# '\w\|[''"`\\]'
+    return a:ch
+  endif
+  return a:ch . s:pairs[a:ch] . "\<C-g>U\<Left>"
+endfunction
+function! s:PairClose(ch) abort
+  return s:PairsOn() && getline('.')[col('.') - 1] ==# a:ch ? "\<C-g>U\<Right>" : a:ch
+endfunction
+function! s:PairQuote(ch) abort
+  return s:PairsOn() && getline('.')[col('.') - 1] ==# a:ch ? "\<C-g>U\<Right>" : s:PairOpen(a:ch)
+endfunction
+function! s:PairBS() abort
+  let line = getline('.')
+  let c = col('.')
+  return s:PairsOn() && c > 1 && get(s:pairs, line[c - 2], '-') ==# line[c - 1] ? "\<BS>\<Del>" : "\<BS>"
+endfunction
+function! s:PairCR() abort
+  if pumvisible()
+    return "\<CR>"
+  endif
+  let line = getline('.')
+  let c = col('.')
+  return s:PairsOn() && c > 1 && line[c - 2 : c - 1] =~# '^\%({}\|\[\]\|()\)$' ? "\<CR>\<C-o>O" : "\<CR>"
+endfunction
+for [s:o, s:c] in [['(', ')'], ['[', ']'], ['{', '}']]
+  execute 'inoremap <expr> <silent>' s:o '<SID>PairOpen("' . s:o . '")'
+  execute 'inoremap <expr> <silent>' s:c '<SID>PairClose("' . s:c . '")'
+endfor
+inoremap <expr> <silent> " <SID>PairQuote('"')
+inoremap <expr> <silent> ' <SID>PairQuote("'")
+inoremap <expr> <silent> ` <SID>PairQuote('`')
+inoremap <expr> <silent> <BS> <SID>PairBS()
+inoremap <expr> <silent> <CR> <SID>PairCR()
+
+" the word under the cursor marked where else it is in view (VSCode's occurrence highlight), once
+" the cursor rests on it; g:vimzip_word_highlight = 0 turns it off
+function! s:WordMark() abort
+  let word = &buftype ==# '' && mode() ==# 'n' && get(g:, 'vimzip_word_highlight', 1) ? expand('<cword>') : ''
+  " (a name, under the cursor: not the next word on the line, not a number or punctuation)
+  if word !~# '^\k*\a\k*$' || getline('.')[col('.') - 1] !~# '\k'
+    let word = ''
+  endif
+  " (nor a keyword: every int or return lit up)
+  if word !=# '' && synIDattr(synIDtrans(synID(line('.'), col('.'), 1)), 'name')
+        \ =~# '^\(Statement\|Keyword\|Type\|Conditional\|Repeat\|StorageClass\|Structure\|Typedef\|PreProc\|Include\|Define\|Macro\|PreCondit\|Boolean\|Operator\|Label\|Exception\|Comment\|String\)$'
+    let word = ''
+  endif
+  if word ==# get(w:, 'vimzip_word', '')
+    return
+  endif
+  call s:WordUnmark()
+  if word !=# ''
+    let w:vimzip_word = word
+    let w:vimzip_word_match = matchadd('VimzipWord', '\V\C\<' . escape(word, '\') . '\>', -1)
+  endif
+endfunction
+function! s:WordUnmark() abort
+  if exists('w:vimzip_word_match')
+    silent! call matchdelete(w:vimzip_word_match)
+    unlet w:vimzip_word_match
+  endif
+  let w:vimzip_word = ''
+endfunction
+augroup vimzip_word
+  autocmd!
+  autocmd CursorHold * call s:WordMark()
+  autocmd CursorMoved * if get(w:, 'vimzip_word', '') !=# '' && expand('<cword>') !=# w:vimzip_word | call s:WordUnmark() | endif
+  autocmd InsertEnter,WinLeave * if get(w:, 'vimzip_word', '') !=# '' | call s:WordUnmark() | endif
+augroup END
+
+" indent guides: a thin line at each indent level, of the file's own width (VSCode's), drawn by vim
+" for the leading spaces and tabs; g:vimzip_indent_guides = 0 turns them off
+function! s:Guides() abort
+  " (the tree has its own)
+  if &filetype ==# 'nerdtree'
+    return
+  endif
+  if !get(g:, 'vimzip_indent_guides', 1) || &buftype !=# '' || exists('b:vimzip_view')
+    setlocal nolist
+    return
+  endif
+  let w = max([1, shiftwidth()])
+  " (the tabs inside a line, aligning names, stay blank: only the leading ones are indent)
+  try
+    let &l:listchars = 'tab:  ,leadtab:│ ,nbsp:␣,leadmultispace:│' . repeat(' ', w - 1)
+  catch /E474/
+    let &l:listchars = 'tab:│ ,nbsp:␣,leadmultispace:│' . repeat(' ', w - 1)
+  endtry
+  setlocal list
+endfunction
+augroup vimzip_guides
+  autocmd!
+  autocmd BufWinEnter,FileType * call s:Guides()
+  autocmd OptionSet shiftwidth,tabstop,expandtab if &buftype ==# '' | call s:Guides() | endif
+augroup END
+
+" brackets colored by depth (VSCode's bracket pair colorization), in the lines in view
+" (a bracket in a string or comment does not count: asked of the syntax only when the line has a
+" quote or comment mark before it, which is 10 times faster)
+function! s:InText(...) abort
+  let [l, c] = a:0 ? a:000 : [line('.'), col('.')]
+  return getline(l)[: c - 2] =~# '["''`#]\|//\|/\*\|--\|^\s*\*'
+        \ && synIDattr(synID(l, c, 0), 'name') =~? 'string\|comment\|character\|regex'
+endfunction
+function! s:Brackets(...) abort
+  let w = a:0 ? a:1 : win_getid()
+  let b = winbufnr(w)
+  if !get(g:, 'vimzip_bracket_colors', 1) || getbufvar(b, '&buftype') !=# '' || !empty(getbufvar(b, 'vimzip_view'))
+        \ || getbufvar(b, '&filetype') =~# '^\(text\|markdown\|gitcommit\|help\|\)$'
+    call s:BracketsClear(w)
+    call setwinvar(w, 'vimzip_brackets_key', [])
+    return
+  endif
+  call win_execute(w, 'call s:BracketsHere()')
+endfunction
+function! s:BracketsClear(w) abort
+  for id in getwinvar(a:w, 'vimzip_brackets', [])
+    silent! call matchdelete(id, a:w)
+  endfor
+  call setwinvar(a:w, 'vimzip_brackets', [])
+endfunction
+function! s:BracketsHere() abort
+  let [top, bot] = [line('w0'), line('w$')]
+  " (nothing changed in view: as it is)
+  let key = [bufnr(''), top, bot, b:changedtick]
+  if get(w:, 'vimzip_brackets_key', []) ==# key && !empty(get(w:, 'vimzip_brackets', []))
+    return
+  endif
+  let w:vimzip_brackets_key = key
+  call s:BracketsClear(win_getid())
+  let skip = 's:InText()'
+  " the depth at the top of the view: the brackets open around it
+  let view = winsaveview()
+  call cursor(top, 1)
+  let depth = 0
+  let start = reltime()
+  " (without asking the syntax: a bracket in a string up there shifts the colors at worst)
+  while depth < 30 && reltimefloat(reltime(start)) < 0.02 && searchpair('[([{]', '', '[)\]}]', 'bW', '', 0, 10) > 0
+    let depth += 1
+    " (one on a line that is not indented opens a definition: nothing around it to look for, which
+    " would scan the whole file above)
+    if indent('.') == 0
+      break
+    endif
+  endwhile
+  call winrestview(view)
+  let groups = [[], [], []]
+  for l in range(top, bot)
+    let t = getline(l)
+    if len(t) > 1000 || t !~# '[()[\]{}]'
+      continue
+    endif
+    let at = match(t, '[()[\]{}]')
+    while at >= 0
+      let ch = t[at]
+      if !s:InText(l, at + 1)
+        if ch =~# '[([{]'
+          call add(groups[depth % 3], [l, at + 1])
+          let depth += 1
+        else
+          let depth = max([0, depth - 1])
+          call add(groups[depth % 3], [l, at + 1])
+        endif
+      endif
+      let at = match(t, '[()[\]{}]', at + 1)
+    endwhile
+  endfor
+  let ids = []
+  for i in range(3)
+    for n in range(0, len(groups[i]) - 1, 8)
+      call add(ids, matchaddpos('VimzipBracket' . (i + 1), groups[i][n : n + 7], -1))
+    endfor
+  endfor
+  let w:vimzip_brackets = ids
+endfunction
+
+" sticky scroll: the lines that open the function, class or block the top of the window is in, kept
+" over it while scrolling (VSCode's); g:vimzip_sticky = 0 turns it off
+let s:sticky = {}
+function! s:StickyHeads(w) abort
+  let b = winbufnr(a:w)
+  let top = line('w0', a:w)
+  if top <= 1
+    return []
+  endif
+  let heads = []
+  if getbufvar(b, '&filetype') =~# '^\(text\|markdown\|gitcommit\|help\|\)$'
+    return []
+  elseif getbufvar(b, '&filetype') ==# 'python'
+    " (by indent: the def / class lines above with less of it)
+    let ind = indent(top)
+    let l = top - 1
+    while l > 0 && len(heads) < 3
+      let t = getbufline(b, l)[0]
+      if t =~# '\S' && indent(l) < ind
+        let ind = indent(l)
+        if t =~# '^\s*\%(async\s\+\)\=\%(def\|class\)\>'
+          call insert(heads, l)
+        endif
+      endif
+      let l -= 1
+    endwhile
+    return heads
+  endif
+  let skip = 's:InText()'
+  let view = winsaveview()
+  call cursor(top, 1)
+  while len(heads) < 3 && searchpair('{', '', '}', 'bW', skip, 0, 20) > 0
+    let l = line('.')
+    " the head: this line, or the one before when the { stands alone (K&R and Allman alike)
+    if getline(l) =~# '^\s*{' && l > 1
+      let l = prevnonblank(l - 1)
+    endif
+    if l < top && index(heads, l) < 0
+      call insert(heads, l)
+    endif
+    if indent(l) == 0
+      break
+    endif
+  endwhile
+  call winrestview(view)
+  " (only what is out of view: each head line covers one at the top)
+  return filter(heads, 'v:val < top + v:key')
+endfunction
+function! s:Sticky(...) abort
+  let w = a:0 ? a:1 : win_getid()
+  let b = winbufnr(w)
+  let ok = get(g:, 'vimzip_sticky', 1) && getbufvar(b, '&buftype') ==# '' && empty(getbufvar(b, 'vimzip_view'))
+        \ && win_gettype(w) ==# '' && !getwinvar(w, '&diff') && winheight(w) > 10
+  let heads = []
+  if ok
+    call win_execute(w, 'let s:sticky_heads = s:StickyHeads(' . w . ')')
+    let heads = s:sticky_heads
+  endif
+  let id = get(s:sticky, w, 0)
+  if empty(heads)
+    if id
+      call popup_close(id)
+      call remove(s:sticky, w)
+    endif
+    return
+  endif
+  let nw = getwinvar(w, '&number') ? max([getwinvar(w, '&numberwidth'), len(line('$', w)) + 1]) : 0
+  let sign = getwinvar(w, '&signcolumn') ==# 'no' ? 0 : 2
+  let lines = map(copy(heads), {_, l -> repeat(' ', sign) . (nw ? printf('%*d ', nw - 1, l) : '') . getbufline(b, l)[0]})
+  let [row, col] = win_screenpos(w)
+  let opts = {'line': row, 'col': col, 'minwidth': winwidth(w) - 1, 'maxwidth': winwidth(w) - 1,
+        \ 'highlight': 'VimzipSticky', 'zindex': 40, 'wrap': 0}
+  if id && !empty(popup_getpos(id))
+    call popup_settext(id, lines)
+    call popup_setoptions(id, opts)
+  else
+    let id = popup_create(lines, opts)
+    let s:sticky[w] = id
+  endif
+  " (colored as the file is)
+  if getbufvar(winbufnr(id), '&syntax') !=# getbufvar(b, '&syntax')
+    call setbufvar(winbufnr(id), '&syntax', getbufvar(b, '&syntax'))
+  endif
+  call setwinvar(id, '&tabstop', getbufvar(b, '&tabstop'))
+  call setwinvar(id, 'vimzip_sticky', 1)
+endfunction
+" the brackets' colors and the sticky lines follow scrolling and editing, a moment later (the
+" mouse wheel scrolls in many small steps)
+let s:view_pending = {}
+function! s:ViewLater(wins) abort
+  for w in a:wins
+    let s:view_pending[w] = 1
+  endfor
+  if get(s:, 'view_timer', -1) < 0
+    let s:view_timer = timer_start(40, {-> s:ViewNow()})
+  endif
+endfunction
+function! s:ViewNow() abort
+  let s:view_timer = -1
+  let wins = map(keys(s:view_pending), 'str2nr(v:val)')
+  let s:view_pending = {}
+  let here = gettabinfo(tabpagenr())[0].windows
+  for w in wins
+    if index(here, w) >= 0
+      call s:Brackets(w)
+      call s:Sticky(w)
+    endif
+  endfor
+  for w in keys(s:sticky)
+    if index(here, str2nr(w)) < 0
+      call popup_close(remove(s:sticky, w))
+    endif
+  endfor
+endfunction
+augroup vimzip_view
+  autocmd!
+  autocmd WinScrolled * call s:ViewLater(map(filter(keys(v:event), 'v:val =~# "^\\d\\+$"'), 'str2nr(v:val)'))
+  autocmd BufWinEnter,TextChanged,TextChangedI,InsertLeave,Syntax * call s:ViewLater([win_getid()])
+  autocmd WinResized,VimResized,TabEnter,WinClosed * call s:ViewLater(gettabinfo(tabpagenr())[0].windows)
+augroup END
+
+" the mouse resting on code: the problem there or the language server's hover in a popup
+let g:ale_set_balloons = 1
+if has('balloon_eval_term')
+  set balloonevalterm balloondelay=500
+endif
+
+" ─── code: peek, symbols ─────────────────────────────────────────────────────────────────────────
+" a request to this buffer's language server (through ALE's connection), the answer to Callback
+let s:lsp_waiting = {}
+function! s:LspAsk(capability, Message, Callback) abort
+  for linter in exists('g:loaded_ale') ? ale#lsp_linter#GetEnabled(bufnr('')) : []
+    if linter.lsp !=# 'tsserver'
+      call ale#lsp_linter#StartLSP(bufnr(''), linter, function('s:LspReady', [a:capability, a:Message, a:Callback]))
+      return 1
+    endif
+  endfor
+  return 0
+endfunction
+function! s:LspReady(capability, Message, Callback, linter, details) abort
+  let id = a:details.connection_id
+  if !ale#lsp#HasCapability(id, a:capability)
+    call a:Callback(v:null)
+    return
+  endif
+  call ale#lsp#NotifyForChanges(id, a:details.buffer)
+  call ale#lsp#RegisterCallback(id, function('s:LspAnswer'))
+  let s:lsp_waiting[ale#lsp#Send(id, a:Message(a:details.buffer))] = a:Callback
+endfunction
+function! s:LspAnswer(conn_id, response) abort
+  if has_key(a:response, 'id') && has_key(s:lsp_waiting, a:response.id)
+    call call(remove(s:lsp_waiting, a:response.id), [get(a:response, 'result', v:null)])
+  endif
+endfunction
+
+" Alt+F12 / Space cd: the definition in a popup at the cursor, without leaving (VSCode's Peek):
+" j / k scroll, Enter goes there, Esc closes
+function! s:Peek() abort
+  let w = expand('<cword>')
+  if w ==# ''
+    return
+  endif
+  let [l, c] = [line('.'), min([col('.'), len(getline('.'))])]
+  if s:LspHere() && s:LspAsk('definition', {b -> ale#lsp#message#Definition(b, l, c)}, function('s:PeekLsp', [w]))
+    return
+  endif
+  " (no server: the tags, the system headers' too)
+  let tags = taglist('^' . w . '$')
+  if empty(tags) && &filetype =~# '^\(c\|cpp\)$' && s:SysTags()
+    let tags = taglist('^' . w . '$')
+  endif
+  if empty(tags)
+    echohl WarningMsg | echo 'No definition found: ' . w | echohl None
+    return
+  endif
+  let t = tags[0]
+  let file = fnamemodify(t.filename, ':p')
+  let lines = s:PeekLines(file)
+  let lnum = t.cmd =~# '^\d\+$' ? str2nr(t.cmd) : 0
+  if !lnum
+    " (a /^text$/ search: found as text)
+    let text = substitute(substitute(t.cmd, '^/\^\=\|\$\=/;\="\=$', '', 'g'), '\\\([/\\]\)', '\1', 'g')
+    let lnum = index(lines, text) + 1
+    let lnum = lnum ? lnum : match(lines, '\V\<' . escape(w, '\') . '\>') + 1
+  endif
+  call s:PeekShow(file, max([1, lnum]), lines)
+endfunction
+function! s:PeekLines(file) abort
+  let b = bufnr(a:file)
+  return b > 0 && bufloaded(b) ? getbufline(b, 1, '$') : filereadable(a:file) ? readfile(a:file) : []
+endfunction
+function! s:PeekLsp(word, result) abort
+  let items = type(a:result) == v:t_dict ? [a:result] : type(a:result) == v:t_list ? a:result : []
+  if empty(items)
+    echohl WarningMsg | echo 'No definition found: ' . a:word | echohl None
+    return
+  endif
+  let i = items[0]
+  let uri = get(i, 'targetUri', get(i, 'uri', ''))
+  let range = get(i, 'targetSelectionRange', get(i, 'range', get(i, 'targetRange', {})))
+  let file = ale#util#ToResource(uri)
+  call s:PeekShow(file, get(get(range, 'start', {}), 'line', 0) + 1, s:PeekLines(file))
+endfunction
+function! s:PeekShow(file, lnum, lines) abort
+  if empty(a:lines)
+    return
+  endif
+  " (from a line or two above, for the comment before it)
+  let first = max([1, a:lnum - 2])
+  let shown = a:lines[first - 1 : first + 199]
+  let height = min([15, len(shown), &lines - 6])
+  let s:peek = {'file': a:file, 'lnum': a:lnum}
+  let id = popup_atcursor(shown, {'title': ' ' . fnamemodify(a:file, ':~:.') . ':' . a:lnum . '  Enter: go there  Esc: close ',
+        \ 'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'padding': [0, 1, 0, 1],
+        \ 'maxheight': height, 'minheight': height, 'minwidth': min([80, &columns - 10]), 'maxwidth': &columns - 10,
+        \ 'scrollbar': 1, 'moved': 'any', 'filter': function('s:PeekKey'), 'firstline': 1})
+  let ft = getbufvar(bufnr(a:file), '&filetype')
+  let ft = ft !=# '' ? ft : &filetype
+  call setbufvar(winbufnr(id), '&syntax', ft)
+  call setwinvar(id, '&tabstop', &tabstop)
+  " (the definition's line marked)
+  call matchaddpos('VimzipPeekLine', [a:lnum - first + 1], 10, -1, {'window': id})
+endfunction
+function! s:PeekKey(id, key) abort
+  let top = popup_getoptions(a:id).firstline
+  let n = line('$', a:id)
+  let steps = {'j': 1, "\<Down>": 1, 'k': -1, "\<Up>": -1, "\<C-d>": 7, "\<C-u>": -7, "\<C-f>": 14, "\<C-b>": -14,
+        \ "\<ScrollWheelDown>": 3, "\<ScrollWheelUp>": -3}
+  if has_key(steps, a:key)
+    call popup_setoptions(a:id, {'firstline': max([1, min([n, top + steps[a:key]])])})
+    return 1
+  elseif a:key ==# "\<CR>"
+    call popup_close(a:id)
+    normal! m'
+    execute 'edit' fnameescape(s:peek.file)
+    call cursor(s:peek.lnum, 1)
+    normal! zz
+    return 1
+  elseif a:key ==# "\<Esc>" || a:key ==# 'q'
+    call popup_close(a:id)
+    return 1
+  endif
+  return 0
+endfunction
+
+" Space fS: the project's symbols as the language server knows them (VSCode's Ctrl+T; vim's Ctrl+t
+" stays the way back from a tag), asked for a name, then picked from a list; Space ft lists the tags
+let s:symbol_kinds = {1: 'file', 2: 'module', 3: 'namespace', 4: 'package', 5: 'class', 6: 'method',
+      \ 7: 'property', 8: 'field', 9: 'constructor', 10: 'enum', 11: 'interface', 12: 'function',
+      \ 13: 'variable', 14: 'constant', 22: 'enum member', 23: 'struct', 24: 'event', 25: 'operator',
+      \ 26: 'type parameter'}
+function! s:Symbols() abort
+  if !s:LspHere()
+    call s:Buf('Tags')
+    return
+  endif
+  let q = inputdialog('Symbol in the project (language server): ', '', "\x01")
+  if q ==# "\x01" || q ==# ''
+    return
+  endif
+  if !s:LspAsk('symbol_search', {b -> ale#lsp#message#Symbol(q)}, function('s:SymbolsGot', [q]))
+    call s:Buf('Tags')
+  endif
+endfunction
+function! s:SymbolsGot(query, result) abort
+  let items = type(a:result) == v:t_list ? a:result : []
+  if empty(items)
+    echohl WarningMsg | echo 'No symbols found: ' . a:query . ' (the server may still be reading the project)' | echohl None
+    return
+  endif
+  let rows = []
+  for i in items
+    let loc = get(i, 'location', {})
+    let file = fnamemodify(ale#util#ToResource(get(loc, 'uri', '')), ':~:.')
+    let line = get(get(get(loc, 'range', {}), 'start', {}), 'line', 0) + 1
+    call add(rows, printf("%s\t%s\t%s\t%s:%d", i.name, get(s:symbol_kinds, get(i, 'kind', 0), ''),
+          \ get(i, 'containerName', ''), file, line))
+  endfor
+  call s:EditWin()
+  call fzf#run(fzf#wrap({'source': rows, 'sink': function('s:SymbolPicked'),
+        \ 'options': ['--prompt', 'Symbol> ', '--delimiter', "\t", '--tabstop', '4', '--query', a:query,
+        \   '--header', 'Enter open   (symbol, kind, in, where)']}))
+endfunction
+function! s:SymbolPicked(row) abort
+  let m = matchlist(a:row, '\t\([^\t]*\):\(\d\+\)$')
+  if !empty(m)
+    normal! m'
+    execute 'edit' fnameescape(expand(m[1]))
+    call cursor(str2nr(m[2]), 1)
+    normal! zz
+  endif
+endfunction
+
+" ─── git: branches, push, pull ───────────────────────────────────────────────────────────────────
+" Space go, or a click on the branch in the status bar: switch branch (a new name typed: a new
+" branch from here); Space gP pushes, Space gF pulls, in a panel that closes itself when it went
+" well (and stays to show why, or to ask for a password)
+function! s:Branches() abort
+  if !s:InGit()
+    return
+  endif
+  let git = 'git -C ' . shellescape(getcwd())
+  let current = trim(system(git . ' branch --show-current'))
+  let rows = systemlist(git . ' for-each-ref --sort=-committerdate --format=' . shellescape('%(refname:short)%09%(committerdate:relative)%09%(subject)') . ' refs/heads refs/remotes')
+  call filter(rows, 'v:val !~# "^[^\t]*/HEAD\t" && v:val !~# "^origin\t"')
+  call map(rows, '(split(v:val, "\t")[0] ==# current ? "* " : "  ") . v:val')
+  call fzf#run(fzf#wrap({'source': rows, 'sink*': function('s:BranchPicked'),
+        \ 'options': ['--prompt', 'Branch> ', '--delimiter', "\t", '--tabstop', '2', '--print-query',
+        \   '--bind', 'enter:accept-or-print-query',
+        \   '--header', 'Enter switch (a new name typed: a new branch)   on ' . current]}))
+endfunction
+function! s:BranchPicked(lines) abort
+  let [query, picked] = [trim(get(a:lines, 0, '')), get(a:lines, 1, '')]
+  let git = 'git -C ' . shellescape(getcwd())
+  if picked !=# ''
+    let name = trim(split(picked[2 :], "\t")[0])
+    " (a remote's branch: a local one following it, as VSCode does)
+    let local = substitute(name, '^[^/]\+/', '', '')
+    if name !=# local && system(git . ' rev-parse --verify --quiet refs/remotes/' . shellescape(name)) !=# ''
+      let has_local = system(git . ' rev-parse --verify --quiet refs/heads/' . shellescape(local)) !=# ''
+      let out = system(git . ' switch ' . (has_local ? shellescape(local) : '--track ' . shellescape(name)))
+    else
+      let out = system(git . ' switch ' . shellescape(name))
+    endif
+  elseif query !=# ''
+    let out = system(git . ' switch -c ' . shellescape(query))
+  else
+    return
+  endif
+  if v:shell_error
+    echohl WarningMsg | echo 'Not switched: ' . get(filter(split(out, "\n"), 'v:val =~# "error\\|fatal\\|\\S"'), 0, out) | echohl None
+    return
+  endif
+  call s:GitAfter()
+  echo 'On ' . trim(system(git . ' branch --show-current'))
+endfunction
+" files, signs and the tree as the new branch has them
+function! s:GitAfter() abort
+  silent! checktime
+  if exists('g:loaded_gitgutter') && g:gitgutter_enabled
+    call gitgutter#all(1)
+  endif
+  call s:TreeSync()
+  call s:BarRefresh()
+endfunction
+function! s:GitPanel(what) abort
+  if !s:InGit()
+    return
+  endif
+  let git = 'git -C ' . shellescape(getcwd())
+  if a:what ==# 'push'
+    " (a branch the remote does not have yet: pushed and followed, as VSCode's Publish Branch)
+    call system(git . ' rev-parse --abbrev-ref --symbolic-full-name @{u}')
+    let cmd = v:shell_error ? 'git push -u origin HEAD' : 'git push'
+  else
+    let cmd = 'git pull'
+  endif
+  call s:QuietWrite('wall')
+  call s:EditWin()
+  let from = win_getid()
+  execute 'botright' max([6, min([10, s:PanelSize('term')])]) 'new'
+  let blank = bufnr('')
+  let buf = term_start([&shell, &shellcmdflag, cmd], {'curwin': 1, 'term_name': 'Git: ' . cmd, 'term_kill': 'hup',
+        \ 'exit_cb': {_, status -> timer_start(200, {-> s:GitPanelDone(buf, cmd, status)})}})
+  if bufexists(blank) && blank != buf
+    execute 'silent! bwipeout' blank
+  endif
+  setlocal winfixheight nonumber nocursorline signcolumn=no nolist
+  call setbufvar(buf, '&buflisted', 0)
+  let s:git_panel = buf
+  " (focus stays with the files, unless git has a question)
+  call win_gotoid(from)
+  call s:Layout()
+endfunction
+function! s:GitPanelDone(buf, cmd, status) abort
+  if a:status == 0 && bufexists(a:buf)
+    execute 'silent! bwipeout!' a:buf
+    call s:Layout()
+  endif
+  call s:GitAfter()
+  if a:status == 0
+    echo a:cmd =~# 'pull' ? 'Pulled' : 'Pushed'
+  else
+    echohl WarningMsg | echo a:cmd . ' failed: see the panel below' | echohl None
+  endif
+endfunction
+function! VimzipBranchClick(info) abort
+  if a:info.button ==# 'l'
+    call s:Branches()
+  endif
+  return 0
+endfunction
+
+" ─── Markdown preview ────────────────────────────────────────────────────────────────────────────
+" Ctrl+Shift+v / Space cv in a Markdown file: the text as it reads, beside it (VSCode's preview):
+" headings, lists, quotes, code, tables and links laid out, marks hidden; it follows the typing and
+" the cursor
+silent! call prop_type_add('vimzip_md_bold', {'highlight': 'VimzipMdBold'})
+silent! call prop_type_add('vimzip_md_italic', {'highlight': 'VimzipMdItalic'})
+silent! call prop_type_add('vimzip_md_code', {'highlight': 'VimzipMdCode'})
+silent! call prop_type_add('vimzip_md_link', {'highlight': 'VimzipMdLink'})
+silent! call prop_type_add('vimzip_md_h1', {'highlight': 'VimzipMdH1'})
+silent! call prop_type_add('vimzip_md_h2', {'highlight': 'VimzipMdH2'})
+silent! call prop_type_add('vimzip_md_dim', {'highlight': 'VimzipMdDim'})
+silent! call prop_type_add('vimzip_md_block', {'highlight': 'VimzipMdBlock'})
+" a line's inline marks: [text without them, [[col, len, type], ...]]
+function! s:MdInline(text) abort
+  let out = ''
+  let props = []
+  let t = a:text
+  while t !=# ''
+    let m = matchlist(t, '^\(`\+\)\(.\{-}\)\1')
+    if !empty(m)
+      call add(props, [len(out) + 1, len(m[2]), 'vimzip_md_code'])
+      let out .= m[2]
+      let t = t[len(m[0]) :]
+      continue
+    endif
+    let m = matchlist(t, '^!\=\[\([^\]]*\)\](\([^)]*\))')
+    if !empty(m)
+      let label = t[0] ==# '!' ? '▣ ' . (m[1] !=# '' ? m[1] : fnamemodify(m[2], ':t')) : m[1]
+      call add(props, [len(out) + 1, len(label), 'vimzip_md_link'])
+      let out .= label
+      let t = t[len(m[0]) :]
+      continue
+    endif
+    let m = matchlist(t, '^\(\*\*\|__\)\(\S.\{-}\)\1')
+    if !empty(m)
+      let [inner, ip] = s:MdInline(m[2])
+      call add(props, [len(out) + 1, len(inner), 'vimzip_md_bold'])
+      call extend(props, map(ip, '[v:val[0] + len(out), v:val[1], v:val[2]]'))
+      let out .= inner
+      let t = t[len(m[0]) :]
+      continue
+    endif
+    let m = matchlist(t, '^\([*_]\)\(\S.\{-}\)\1\%(\w\)\@!')
+    if !empty(m) && (out ==# '' || out[-1:] !~# '\w')
+      let [inner, ip] = s:MdInline(m[2])
+      call add(props, [len(out) + 1, len(inner), 'vimzip_md_italic'])
+      call extend(props, map(ip, '[v:val[0] + len(out), v:val[1], v:val[2]]'))
+      let out .= inner
+      let t = t[len(m[0]) :]
+      continue
+    endif
+    let m = matchlist(t, '^<\(https\=://[^>]*\)>')
+    if !empty(m)
+      call add(props, [len(out) + 1, len(m[1]), 'vimzip_md_link'])
+      let out .= m[1]
+      let t = t[len(m[0]) :]
+      continue
+    endif
+    " (plain text up to the next possible mark)
+    let n = match(t, '[`!\[*_<]', 1)
+    let n = n < 0 ? len(t) : n
+    let out .= t[: n - 1]
+    let t = t[n :]
+  endwhile
+  return [out, props]
+endfunction
+" the preview's lines, their marks, and for each source line the preview line it begins
+function! s:MdRender(src, ...) abort
+  let [lines, props, map] = [[], [], []]
+  let s:md_in_code = -2
+  let i = 0
+  let n = len(a:src)
+  let width = min([60, get(a:, 1, 60)])
+  while i < n
+    let t = a:src[i]
+    call add(map, len(lines) + 1)
+    " fenced code: as it is, on a shaded block
+    let fence = matchstr(t, '^\s*\zs\(```\+\|\~\~\~\+\)')
+    if fence !=# ''
+      let lang = trim(t[stridx(t, fence) + len(fence) :])
+      call add(lines, lang !=# '' ? '  ' . lang : '')
+      call add(props, [len(lines), 1, max([1, len(lines[-1])]), 'vimzip_md_dim'])
+      let i += 1
+      while i < n && a:src[i] !~# '^\s*' . fence[0] . '\{' . len(fence) . ',}\s*$'
+        call add(map, len(lines) + 1)
+        call add(lines, '  ' . a:src[i])
+        call add(props, [len(lines), 1, max([1, len(lines[-1])]), 'vimzip_md_block'])
+        let i += 1
+      endwhile
+      call add(map, len(lines) + 1)
+      let i += 1
+      continue
+    endif
+    " a table: columns lined up, drawn with lines
+    if t =~# '^\s*|.*|\s*$' && i + 1 < n && a:src[i + 1] =~# '^\s*|\=\s*:\=-\+:\=\s*\(|\s*:\=-\+:\=\s*\)*|\=\s*$'
+      let rows = []
+      let j = i
+      while j < n && a:src[j] =~# '^\s*|.*|\s*$'
+        if j != i + 1
+          call add(rows, map(split(trim(a:src[j])[1 : -2], '\\\@<!|', 1), 'trim(v:val)'))
+        endif
+        let j += 1
+      endwhile
+      let cols = max(map(copy(rows), 'len(v:val)'))
+      let widths = map(range(cols), {c -> max(map(copy(rows), {_, r -> strwidth(s:MdInline(get(r, c, ''))[0])}))})
+      for r in range(len(rows))
+        let line = '│'
+        for c in range(cols)
+          let [cell, cp] = s:MdInline(get(rows[r], c, ''))
+          for p in cp
+            call add(props, [len(lines) + 1, len(line) + 1 + p[0], p[1], p[2]])
+          endfor
+          if r == 0
+            call add(props, [len(lines) + 1, len(line) + 2, len(cell), 'vimzip_md_bold'])
+          endif
+          let line .= ' ' . cell . repeat(' ', widths[c] - strwidth(cell)) . ' │'
+        endfor
+        call add(lines, line)
+        if r == 0
+          call add(lines, '├' . join(map(copy(widths), 'repeat("─", v:val + 2)'), '┼') . '┤')
+          call add(props, [len(lines), 1, len(lines[-1]), 'vimzip_md_dim'])
+        endif
+      endfor
+      for _ in range(i + 1, j - 1)
+        call add(map, len(lines))
+      endfor
+      let i = j
+      continue
+    endif
+    let m = matchlist(t, '^\s\{,3}\(#\{1,6}\)\s\+\(.\{-}\)\s*#*\s*$')
+    if !empty(m)
+      let [text, tp] = s:MdInline(m[2])
+      call add(lines, text)
+      call add(props, [len(lines), 1, max([1, len(text)]), len(m[1]) == 1 ? 'vimzip_md_h1' : 'vimzip_md_h2'])
+      if len(m[1]) <= 2
+        call add(lines, repeat(len(m[1]) == 1 ? '═' : '─', max([strwidth(text), 3])))
+        call add(props, [len(lines), 1, len(lines[-1]), 'vimzip_md_dim'])
+      endif
+      let i += 1
+      continue
+    endif
+    if t =~# '^\s\{,3}\([-*_]\)\(\s*\1\)\{2,}\s*$'
+      call add(lines, repeat('─', width))
+      call add(props, [len(lines), 1, len(lines[-1]), 'vimzip_md_dim'])
+      let i += 1
+      continue
+    endif
+    " (a code block indented by four)
+    if t =~# '^\(    \|\t\)' && (empty(lines) || lines[-1] ==# '' || get(s:, 'md_in_code', 0) == i - 1)
+      call add(lines, t)
+      call add(props, [len(lines), 1, len(t), 'vimzip_md_block'])
+      let s:md_in_code = i
+      let i += 1
+      continue
+    endif
+    " lists, quotes and paragraphs, with their inline marks
+    let lead = ''
+    let body = t
+    let m = matchlist(t, '^\(\s*\)\([-*+]\)\s\+\(\[[ xX]\]\s\+\)\=\(.*\)$')
+    if !empty(m)
+      let box = m[3] =~? 'x' ? '☑ ' : m[3] !=# '' ? '☐ ' : ''
+      let lead = m[1] . (box !=# '' ? box : '• ')
+      let body = m[4]
+    else
+      let m = matchlist(t, '^\(\s*>\+\)\s\=\(.*\)$')
+      if !empty(m)
+        let lead = repeat('▎ ', len(substitute(m[1], '[^>]', '', 'g')))
+        let body = m[2]
+      endif
+    endif
+    let [text, tp] = s:MdInline(body)
+    call add(lines, lead . text)
+    if lead =~# '▎'
+      call add(props, [len(lines), 1, len(lead), 'vimzip_md_dim'])
+    endif
+    for p in tp
+      call add(props, [len(lines), len(lead) + p[0], p[1], p[2]])
+    endfor
+    let i += 1
+  endwhile
+  return [lines, props, map]
+endfunction
+function! s:MdPreview() abort
+  if &filetype !=# 'markdown'
+    echo 'Markdown preview: in a Markdown file'
+    return
+  endif
+  let src = bufnr('')
+  let old = getbufvar(src, 'vimzip_md_preview', -1)
+  if bufwinnr(old) > 0
+    execute bufwinnr(old) . 'close'
+    return
+  endif
+  let from = win_getid()
+  execute 'rightbelow vertical' max([40, winwidth(0) / 2]) 'new'
+  setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted wrap linebreak breakindent nonumber
+  setlocal nocursorline signcolumn=no nolist nomodeline filetype=vimzipmdpreview
+  execute 'silent file' fnameescape('Preview ' . fnamemodify(bufname(src), ':t'))
+  let b:vimzip_md_source = src
+  call setbufvar(src, 'vimzip_md_preview', bufnr(''))
+  call win_gotoid(from)
+  call s:MdUpdate(src)
+  augroup vimzip_md
+    autocmd! * <buffer>
+    autocmd TextChanged,TextChangedI <buffer> call s:MdLater(bufnr(''))
+    autocmd CursorMoved,CursorMovedI <buffer> call s:MdFollow(bufnr(''))
+  augroup END
+endfunction
+function! s:MdLater(src) abort
+  call timer_stop(getbufvar(a:src, 'vimzip_md_timer', -1))
+  call setbufvar(a:src, 'vimzip_md_timer', timer_start(300, {-> s:MdUpdate(a:src)}))
+endfunction
+function! s:MdUpdate(src) abort
+  let pv = getbufvar(a:src, 'vimzip_md_preview', -1)
+  if !bufexists(pv)
+    return
+  endif
+  let [lines, props, map] = s:MdRender(getbufline(a:src, 1, '$'), max([20, winwidth(bufwinid(pv)) - 1]))
+  call setbufvar(pv, '&modifiable', 1)
+  silent call deletebufline(pv, 1, '$')
+  call setbufline(pv, 1, lines)
+  for [l, c, len, type] in props
+    if len > 0
+      silent! call prop_add(l, c, {'length': len, 'type': type, 'bufnr': pv})
+    endif
+  endfor
+  call setbufvar(pv, '&modifiable', 0)
+  call setbufvar(a:src, 'vimzip_md_map', map)
+  call s:MdFollow(a:src)
+endfunction
+" the preview scrolled to where the cursor is in the source
+function! s:MdFollow(src) abort
+  let pv = getbufvar(a:src, 'vimzip_md_preview', -1)
+  let w = bufwinid(pv)
+  let map = getbufvar(a:src, 'vimzip_md_map', [])
+  if w < 0 || empty(map)
+    return
+  endif
+  let l = get(map, line('.') - 1, map[-1])
+  call win_execute(w, 'call cursor(' . l . ', 1) | normal! zz')
+endfunction
+
+nnoremap <silent> <M-F12> :call <SID>Peek()<CR>
+nnoremap <silent> <leader>cd :call <SID>Peek()<CR>
+nnoremap <silent> <leader>ft :call <SID>Buf('Tags')<CR>
+nnoremap <silent> <leader>fS :call <SID>Symbols()<CR>
+nnoremap <silent> <leader>go :call <SID>Branches()<CR>
+nnoremap <silent> <leader>gP :call <SID>GitPanel('push')<CR>
+nnoremap <silent> <leader>gF :call <SID>GitPanel('pull')<CR>
+nnoremap <silent> <leader>cv :call <SID>MdPreview()<CR>
+nnoremap <silent> <C-S-v> :call <SID>MdPreview()<CR>
+
 " git: Space g; ]c / [c move between changes (vim's keys for that in a diff)
 " outside a git repository: one line saying so (Space gd stopped at a press-ENTER error)
 function! s:InGit() abort
@@ -3892,6 +4752,7 @@ for s:m in ['n', 'x', 'i', 't']
   execute s:m . 'noremap <C-b> <C-b>'
   execute s:m . 'noremap <C-h> ' . (s:m ==# 'n' ? '<C-w>h' : '<C-h>')
 endfor
+nnoremap <C-v> <C-v>
 " ─── debugger ────────────────────────────────────────────────────────────────────────────────────
 " debugger (termdebug): F5 start/continue, F9 breakpoint, F10 over, F11 step
 function! s:Debug() abort
