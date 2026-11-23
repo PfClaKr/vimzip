@@ -634,7 +634,7 @@ let s:servers = [
   \ ['c', 'C/C++', ['c', 'cpp'], [['clangd', 'clangd', 'install clangd (apt, brew, ...)']]],
   \ ['rust', 'Rust', ['rust'], [['analyzer', 'rust-analyzer', 'rustup component add rust-analyzer']]],
   \ ['python', 'Python', ['python'], [['pyright', 'pyright-langserver', 'npm install -g pyright'],
-  \                                  ['pylsp', 'pylsp', 'pip install python-lsp-server']]],
+  \                                  ['pylsp', 'pylsp', 'pipx install python-lsp-server']]],
   \ ['go', 'Go', ['go'], [['gopls', 'gopls', 'go install golang.org/x/tools/gopls@latest']]],
   \ ['dart', 'Dart/Flutter', ['dart'], [['analysis_server', 'dart', 'install the Dart or Flutter SDK']]],
   \ ['typescript', 'TypeScript/JS', ['typescript', 'javascript', 'typescriptreact', 'javascriptreact'],
@@ -642,7 +642,7 @@ let s:servers = [
   \ ['lua', 'Lua', ['lua'], [['lua_language_server', 'lua-language-server', 'install lua-language-server']]],
   \ ['bash', 'Bash', ['sh'], [['language_server', 'bash-language-server', 'npm install -g bash-language-server']]],
   \ ['zig', 'Zig', ['zig'], [['zls', 'zls', 'install zls']]],
-  \ ['cmake', 'CMake', ['cmake'], [['cmake_language_server', 'cmake-language-server', "pip install cmake-language-server 'pygls<2'"]]]]
+  \ ['cmake', 'CMake', ['cmake'], [['cmake_language_server', 'cmake-language-server', "pipx install cmake-language-server; pipx inject cmake-language-server 'pygls<2'"]]]]
 " (ALE has no CMake server of its own: commands' help on K, completion, in CMakeLists.txt; it reads
 " the targets from the build vimzip made for the project, see "CMake projects")
 function! s:CMakeLspRoot(buffer) abort
