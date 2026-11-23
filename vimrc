@@ -1952,12 +1952,14 @@ function! s:Prune(...) abort
   let Path = {f -> substitute(fnamemodify(f, ':t:r'), '%', '/', 'g')}
   " (a hashed name, see s:CacheName, cannot be traced back to its file: it only ages)
   let Hashed = {f -> fnamemodify(f, ':t') !~# '%'}
+  " (backup/: a save's safety copy is removed after it; one left over is from a save cut short)
   let rules = [['undo/*', 365, {f -> Hashed(f) || filereadable(substitute(fnamemodify(f, ':t'), '%', '/', 'g'))}],
         \      ['sessions/*.vim', 365, {f -> isdirectory(s:SessionDir(f))}],
         \      ['words/*.txt', 90, {f -> Hashed(f) || isdirectory(Path(f))}],
         \      ['systags/*.tags', 90, {f -> Hashed(f) || filereadable(Path(f))}],
         \      ['tags/*-tags', 90, {f -> 1}],
-        \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}]]
+        \      ['words/*.tmp', 1, {f -> 0}], ['tags/*.temp', 1, {f -> 0}],
+        \      ['backup/*', 7, {f -> 0}]]
   for [pat, days, Exists] in rules
     for f in glob(s:cache . '/' . pat, 1, 1)
       let age = (localtime() - getftime(f)) / day
