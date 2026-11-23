@@ -350,16 +350,21 @@ function! s:CodeSyntax() abort
       endif
     endfor
   else
+    " defined before the syntax file's own items: where one of those starts at the same place (a
+    " keyword written as a match, R"(raw)", f"{x}", a label, a macro!), it still wins
+    syntax clear
     let skip = has_key(s:code_skip, &syntax) ? '\%(\<\%(' . s:code_skip[&syntax] . '\)\>\)\@!' : ''
-    execute 'syntax match vimzipVariable /' . skip . '\<\h\w*\>/ display'
+    " (PHP: code only between <?php and ?>, not the page around it)
+    let in = &syntax ==# 'php' ? ' contained containedin=phpRegion,phpRegionSc,phpRegionAsp' : ''
+    execute 'syntax match vimzipVariable /' . skip . '\<\h\w*\>/ display' . in
     if kind ==# 'pascal'
       " (Go, C#: functions are CamelCase too; a call stays a function)
-      syntax match vimzipType /\<\u\w*\l\w*\>/ display
+      execute 'syntax match vimzipType /\<\u\w*\l\w*\>/ display' . in
     endif
-    syntax match vimzipMember /\%(\.\|->\)\s*\zs\h\w*\>/ display
-    execute 'syntax match vimzipFunction /' . skip . '\<\h\w*\ze\s*(/ display'
+    execute 'syntax match vimzipMember /\%(\.\|->\)\s*\zs\h\w*\>/ display' . in
+    execute 'syntax match vimzipFunction /' . skip . '\<\h\w*\ze\s*(/ display' . in
     if kind ==# 'class' || kind ==# 'cpp'
-      syntax match vimzipType /\<\u\w*\l\w*\>/ display
+      execute 'syntax match vimzipType /\<\u\w*\l\w*\>/ display' . in
     endif
     if kind ==# 'c' || kind ==# 'cpp'
       syntax match vimzipType /\<\%([ts]_\h\w*\|\h\w*_t\)\>/ display
@@ -367,7 +372,9 @@ function! s:CodeSyntax() abort
     if kind ==# 'cpp'
       syntax match vimzipType /\<\h\w*\ze::/ display
     endif
-    syntax match vimzipConstant /\<\u[A-Z0-9_]\+\>/ display
+    execute 'syntax match vimzipConstant /\<\u[A-Z0-9_]\+\>/ display' . in
+    unlet! b:current_syntax
+    execute 'runtime! syntax/' . &syntax . '.vim'
   endif
   highlight default link vimzipFunction Function
   highlight default link vimzipType Type
