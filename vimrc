@@ -556,11 +556,15 @@ function! s:Blame() abort
     call job_stop(s:blame_job)
   endif
   let [buf, lnum, out] = [bufnr(''), line('.'), []]
+  let s:blame_gen = get(s:, 'blame_gen', 0) + 1
+  let gen = s:blame_gen
   let s:blame_job = job_start(['git', '-C', expand('%:p:h'), 'blame', '--porcelain', '-L', lnum . ',' . lnum, '--', expand('%:t')],
-        \ {'err_io': 'null', 'out_cb': {_, l -> add(out, l)}, 'close_cb': {_ -> s:BlameShow(buf, lnum, out)}})
+        \ {'err_io': 'null', 'out_cb': {_, l -> add(out, l)}, 'close_cb': {_ -> s:BlameShow(buf, lnum, out, gen)}})
 endfunction
-function! s:BlameShow(buf, lnum, out) abort
-  if empty(a:out) || bufnr('') != a:buf || line('.') != a:lnum || mode() !=# 'n'
+function! s:BlameShow(buf, lnum, out, gen) abort
+  " (only the latest request: a stopped one still reports, and the line got its text twice)
+  if empty(a:out) || a:gen != s:blame_gen || bufnr('') != a:buf || line('.') != a:lnum || mode() !=# 'n'
+        \ || &modified || exists('s:blame_at')
     return
   endif
   let info = {}
