@@ -606,10 +606,11 @@ command! -bar CMake call s:CMakeHere()
 " (fmt's format.h: checked as C, "'type_traits' file not found")
 let s:cpp_project = {}
 function! s:CppHeader() abort
-  if expand('<afile>:e') !=# 'h' || &buftype !=# ''
+  let file = expand('<afile>:p')
+  " (not system headers: those stay as vim tells)
+  if expand('<afile>:e') !=# 'h' || &buftype !=# '' || file =~# '^/usr/'
     return
   endif
-  let file = expand('<afile>:p')
   let git = finddir('.git', fnamemodify(file, ':h') . ';')
   let root = git !=# '' ? fnamemodify(git, ':p:h:h') : fnamemodify(file, ':h')
   if !has_key(s:cpp_project, root)
@@ -2679,8 +2680,9 @@ function! s:ImgRender(buf) abort
         \ 'close_cb': {_ -> s:ImgShow(a:buf, out, size)}})
 endfunction
 function! s:ImgShow(buf, out, size) abort
+  " (gone, or resized again while drawing: that drawing is not shown)
   if !bufexists(a:buf) || getbufvar(a:buf, 'vimzip_size', []) != a:size
-    return  " gone, or resized again while drawing
+    return
   endif
   if empty(a:out) || a:out[0] =~# '^error: '
     let msg = empty(a:out) ? 'no output' : substitute(a:out[0], '^error: \(vimzip-view: \)\=', '', '')
