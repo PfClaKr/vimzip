@@ -1384,6 +1384,18 @@ function! s:Quit(bang) abort
   if &buftype ==# '' && a:bang
     setlocal nomodified  " discard: keep autosave (on leaving the buffer) from writing it
   endif
+  if &buftype ==# '' && editwins < 2 && tabpagenr('$') > 1
+    " the last file of one of vim's tab pages (:tabnew): that tab page closes (and an empty
+    " buffer it had leaves no empty tab behind)
+    let bufs = tabpagebuflist()
+    execute 'tabclose' . (a:bang ? '!' : '')
+    for b in bufs
+      if bufname(b) ==# '' && getbufvar(b, '&buftype') ==# '' && !getbufvar(b, '&modified') && empty(win_findbuf(b))
+        execute 'silent! bwipeout' b
+      endif
+    endfor
+    return
+  endif
   if &buftype !=# '' || editwins > 1 || len(getbufinfo({'buflisted': 1})) < 2
     let s:quitting = &buftype ==# '' && editwins < 2  " the last file: leave vim
     execute 'quit' . (a:bang ? '!' : '')
