@@ -79,9 +79,9 @@ cmake-language-server (CMakeLists.txt). `:Lsp` (or `Space cl`) lists them and tu
 `let g:vimzip_lsp = {'python': 'pylsp', 'go': 0}`.
 
 Saving (`Ctrl+s`, `:w`; not the autosave while typing) formats the file when the project has its
-formatter's settings (`.clang-format`, `.prettierrc`, `rustfmt.toml`, `[tool.ruff]` or `[tool.black]`
-in `pyproject.toml`...), and Go and Zig files always; `let g:vimzip_format_on_save = 0` (or `1`:
-whenever a formatter is installed) decides for it. `let g:vimzip_build = 'make debug'` sets the build
+formatter's settings (`.clang-format`, `.prettierrc`, `rustfmt.toml`, `[tool.ruff.format]` or
+`[tool.black]` in `pyproject.toml`...), and Go and Zig files always; `let g:vimzip_format_on_save = 0`
+(or `1`: whenever a formatter is installed) decides for it. `let g:vimzip_build = 'make debug'` sets the build
 command. Each of the reading and typing aids can be turned off: `g:vimzip_autopairs`,
 `g:vimzip_word_highlight`, `g:vimzip_indent_guides`, `g:vimzip_bracket_colors`, `g:vimzip_sticky`
 (`= 0`).
