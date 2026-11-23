@@ -772,10 +772,15 @@ function! s:CMakeLspRoot(buffer) abort
   let root = s:CMakeRoot(fnamemodify(bufname(a:buffer), ':p'))
   return root !=# '' ? root : fnamemodify(bufname(a:buffer), ':p:h')
 endfunction
+" (the project's own build, if it keeps one with a compile_commands.json)
+function! s:CMakeBuildDir(buffer) abort
+  let own = exists('g:loaded_ale') ? ale#c#FindCompileCommands(a:buffer)[1] : ''
+  return own !=# '' ? fnamemodify(own, ':h') : s:cache . '/cmake/' . s:CacheName(s:CMakeLspRoot(a:buffer), '')
+endfunction
 silent! call ale#linter#Define('cmake', {'name': 'cmake_language_server', 'lsp': 'stdio',
       \ 'executable': 'cmake-language-server', 'command': '%e',
       \ 'project_root': function('s:CMakeLspRoot'),
-      \ 'initialization_options': {b -> {'buildDirectory': s:cache . '/cmake/' . s:CacheName(s:CMakeLspRoot(b), '')}}})
+      \ 'initialization_options': {b -> {'buildDirectory': s:CMakeBuildDir(b)}}})
 " plain checkers in place of a server that is off, or next to one (s:also); ALE skips missing ones
 let s:checkers = {'c': ['cc'], 'cpp': ['cc'], 'sh': ['shellcheck'], 'python': ['ruff', 'flake8'],
   \ 'go': ['gofmt', 'govet'], 'lua': ['luacheck'], 'typescript': ['eslint'], 'javascript': ['eslint']}
