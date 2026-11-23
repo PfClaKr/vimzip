@@ -5006,8 +5006,11 @@ endfunction
 call s:Light()
 " while vim starts, ALE's check of the files opening and the look at their CMake project wait for
 " the first screen (12 ms and 5 ms before anything showed)
-let s:lint_on_enter = get(g:, 'ale_lint_on_enter', 1)
-let g:ale_lint_on_enter = 0
+" (not when this file is read again in a running vim: nothing would turn it back on)
+if !v:vim_did_enter
+  let s:lint_on_enter = get(g:, 'ale_lint_on_enter', 1)
+  let g:ale_lint_on_enter = 0
+endif
 function! s:Started() abort
   let g:ale_lint_on_enter = s:lint_on_enter
   for b in s:cmake_later
