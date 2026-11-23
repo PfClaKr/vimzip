@@ -408,7 +408,8 @@ autocmd BufReadPost /usr/* setlocal readonly nomodifiable
 " compile_commands.json of its own (cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON) gets one in
 " the cache, made in the background the first time one of its C/C++ files opens, and again after a
 " CMakeLists.txt is saved; the checks (ALE's cc) and clangd then find its headers, as VSCode's
-" CMake Tools does. g:vimzip_cmake = 0 turns it off.
+" CMake Tools does. Other projects without one get their folders with headers as include paths.
+" g:vimzip_cmake = 0 turns both off.
 let s:cmake = {}
 function! s:CMakeRoot(file) abort
   " the topmost folder with a CMakeLists.txt, up to the git work tree's root
@@ -429,11 +430,26 @@ function! s:CMakeRoot(file) abort
 endfunction
 function! s:CMake(buf) abort
   let file = fnamemodify(bufname(a:buf), ':p')
-  if !get(g:, 'vimzip_cmake', 1) || !executable('cmake') || getbufvar(a:buf, '&buftype') !=# '' || file =~# '^/usr/'
+  if !get(g:, 'vimzip_cmake', 1) || getbufvar(a:buf, '&buftype') !=# '' || file =~# '^/usr/'
     return
   endif
-  let root = s:CMakeRoot(file)
+  let root = executable('cmake') ? s:CMakeRoot(file) : ''
   if root ==# ''
+    " no CMake: a project without a compile_commands.json gets its folders with headers as include
+    " paths (clangd found none at all, ALE's checks only an include/ at the root)
+    let git = finddir('.git', fnamemodify(file, ':h') . ';')
+    let git = git !=# '' ? git : findfile('.git', fnamemodify(file, ':h') . ';')
+    let root = git !=# '' ? fnamemodify(git, ':p:h:h') : stridx(file, getcwd() . '/') == 0 ? getcwd() : ''
+    if root ==# '' || root ==# expand('~') || (exists('*ale#c#FindCompileCommands') && !empty(ale#c#FindCompileCommands(a:buf)[1]))
+      return
+    endif
+    let dir = s:cache . '/cmake/' . s:CacheName(root, '')
+    if filereadable(dir . '/compile_commands.json')
+      call s:CMakeUse(a:buf, dir)
+    endif
+    if !has_key(s:cmake, root)  " (made again once a session: new folders)
+      let s:cmake[root] = {'job': s:GuessJob(root, dir)}
+    endif
     return
   endif
   let dir = s:cache . '/cmake/' . s:CacheName(root, '')
@@ -492,8 +508,13 @@ function! s:CMakeDone(root, dir, status) abort
 endfunction
 " a compile_commands.json with the folders that hold headers (and their parents, for "lib/x.h")
 " as include paths, one entry per source folder (clangd and ALE use it for the folder's other files)
-function! s:GuessIncludes(root, dir) abort
-  let files = systemlist('rg --files -t c -t cpp -t h ' . shellescape(a:root))
+function! s:GuessJob(root, dir) abort
+  let files = []
+  return job_start(['rg', '--files', '-t', 'c', '-t', 'cpp', '-t', 'h', a:root], {'in_io': 'null', 'err_io': 'null',
+        \ 'out_cb': {_, l -> add(files, l)}, 'close_cb': {_ -> s:GuessIncludes(a:root, a:dir, files) ? s:CMakeDone(a:root, a:dir, 0) : 0}})
+endfunction
+function! s:GuessIncludes(root, dir, ...) abort
+  let files = a:0 ? a:1 : systemlist('rg --files -t c -t cpp -t h ' . shellescape(a:root))
   let hdr = '\.\(h\|hh\|hpp\|hxx\|inl\)$'
   let incs = {}
   for f in filter(copy(files), 'v:val =~? hdr')
@@ -507,9 +528,10 @@ function! s:GuessIncludes(root, dir) abort
   for f in filter(files, 'v:val !~? hdr')
     let dirs[fnamemodify(f, ':h')] = f
   endfor
-  if v:shell_error || empty(dirs) || len(incs) > 300 || len(dirs) > 2000
+  if empty(dirs) || len(incs) > 300 || len(dirs) > 2000
     return 0
   endif
+  call mkdir(a:dir, 'p')
   let flags = map(sort(keys(incs)), '"-I" . v:val')
   let db = map(values(dirs), {_, f -> {'directory': a:root, 'file': f,
         \ 'arguments': [f =~? '\.c$' ? 'cc' : 'c++'] + flags + ['-c', f]}})

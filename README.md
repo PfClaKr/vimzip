@@ -68,7 +68,9 @@ C/C++ projects built with CMake get their include paths and defines from it: whe
 no `compile_commands.json` of its own, vimzip configures it in the background (into its cache, the
 project folder stays as it is) the first time a C/C++ file opens, and again after a `CMakeLists.txt`
 is saved. If CMake fails (a missing package), the project's folders with headers are used instead
-and `:CMake` tries again. `let g:vimzip_cmake = 0` turns this off.
+and `:CMake` tries again; so are they for projects without CMake (as VSCode's default include path
+does). A project's own `compile_commands.json` always comes first. `let g:vimzip_cmake = 0` turns
+this off.
 
 ## Update and uninstall
 
