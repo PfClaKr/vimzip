@@ -31,9 +31,15 @@ Opens the file tree and the files you had open last time. Files save themselves.
   `Space ca`), the problems of the open files in one list (`Space cp`, or click `E`/`W` in the status
   bar), build (`Ctrl+Shift+b` / `Space cb`: CMake, make, cargo, go, zig or npm; errors join the problems)
 - **Edit**: several places at once: `Ctrl+n` on a word picks it and each `Ctrl+n` more the next one
-  (VSCode's `Ctrl+d`), then `c` retypes them all
+  (VSCode's `Ctrl+d`), then `c` retypes them all; brackets and quotes close themselves
+- **Read**: the word under the cursor marked where else it is, indent guides, brackets colored by
+  depth, the function or block you are in kept at the top while scrolling, the definition in a popup
+  (`Alt+F12` / `Space cd`), the project's symbols from the language server (`Space fS`), the mouse
+  resting on code shows its problem or documentation, and a Markdown preview beside the file
+  (`Ctrl+Shift+v` / `Space cv`)
 - **Git**: status, line blame, file history, a timeline under the tree, change marks at the window
-  edge, merge conflicts colored with a key for each choice (`Space mc` / `mi` / `mb`)
+  edge, merge conflicts colored with a key for each choice (`Space mc` / `mi` / `mb`), switch branch
+  (`Space go`, or click it in the status bar), push and pull (`Space gP` / `Space gF`)
 - **Panels**: terminal (`F4`), outline (`F3`), an AI agent on the right (`Space a`)
 - **Debug**: gdb with breakpoints (`F5`, `F9`, `F10`, `F11`)
 - **Images and PDFs**: open like any file; pictures are drawn in the window, PDFs show their text
@@ -76,7 +82,9 @@ Saving (`Ctrl+s`, `:w`; not the autosave while typing) formats the file when the
 formatter's settings (`.clang-format`, `.prettierrc`, `rustfmt.toml`, `[tool.ruff]` or `[tool.black]`
 in `pyproject.toml`...), and Go and Zig files always; `let g:vimzip_format_on_save = 0` (or `1`:
 whenever a formatter is installed) decides for it. `let g:vimzip_build = 'make debug'` sets the build
-command.
+command. Each of the reading and typing aids can be turned off: `g:vimzip_autopairs`,
+`g:vimzip_word_highlight`, `g:vimzip_indent_guides`, `g:vimzip_bracket_colors`, `g:vimzip_sticky`
+(`= 0`).
 
 C/C++ projects built with CMake get their include paths and defines from it: when the project has
 no `compile_commands.json` of its own, vimzip configures it in the background (into its cache, the
