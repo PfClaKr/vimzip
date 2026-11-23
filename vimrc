@@ -1087,6 +1087,34 @@ function! s:FastNERDTree() abort
     let g:NERDTreeDirNode._renderToString = function('s:NERDTreeRender')
     let g:NERDTreeFileNode._renderToString = function('s:NERDTreeRender')
   endif
+  if exists('g:NERDTreeMenuItem')
+    for item in g:NERDTreeMenuItem.All()
+      if get(item, 'callback', '') is# 'NERDTreeMoveNode'
+        let item.callback = 'VimzipTreeMove'
+      endif
+    endfor
+  endif
+endfunction
+" the tree's m, m (move / rename): a path typed without its folder is taken in the node's own
+" folder (calc2.c: renamed where it is), not as broken input that moved the file to the project's
+" root and left its tab on the old name with "Node Not Renamed"
+function! VimzipTreeMove() abort
+  let node = g:NERDTreeFileNode.GetSelected()
+  if empty(node)
+    return
+  endif
+  let old = node.path.str()
+  let new = trim(input('Rename or move to: ', old, 'file'))
+  if new ==# '' || new ==# old
+    return
+  endif
+  if new !~# '^[/~]'
+    let new = fnamemodify(old, ':h') . '/' . new
+  endif
+  let new = simplify(fnamemodify(expand(new), ':p'))
+  " NERDTree's own move, its path question answered with the full path
+  call feedkeys("\<C-u>" . new . "\<CR>", 'n')
+  call NERDTreeMoveNode()
 endfunction
 
 " termdebug
