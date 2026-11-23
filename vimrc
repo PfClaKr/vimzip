@@ -1088,33 +1088,48 @@ function! s:FastNERDTree() abort
     let g:NERDTreeFileNode._renderToString = function('s:NERDTreeRender')
   endif
   if exists('g:NERDTreeMenuItem')
+    let ours = {'NERDTreeAddNode': 'VimzipTreeAdd', 'NERDTreeMoveNode': 'VimzipTreeMove', 'NERDTreeCopyNode': 'VimzipTreeCopy'}
     for item in g:NERDTreeMenuItem.All()
-      if get(item, 'callback', '') is# 'NERDTreeMoveNode'
-        let item.callback = 'VimzipTreeMove'
+      if type(get(item, 'callback', 0)) == v:t_string && has_key(ours, item.callback)
+        let item.callback = ours[item.callback]
       endif
     endfor
   endif
 endfunction
-" the tree's m, m (move / rename): a path typed without its folder is taken in the node's own
-" folder (calc2.c: renamed where it is), not as broken input that moved the file to the project's
-" root and left its tab on the old name with "Node Not Renamed"
+" the tree's m menu (add, move / rename, copy): a path typed without its folder is taken in the
+" selected node's folder (calc2.c: renamed where it is, new.c: created in the selected folder), not
+" from the project's root; for a move that was broken input, leaving the tab on the old name
+function! s:TreeMenu(node, prompt, default, Then) abort
+  let new = trim(input(a:prompt, a:default, 'file'))
+  if new ==# '' || new ==# a:default
+    return
+  endif
+  let base = a:node.path.isDirectory && a:Then is# function('NERDTreeAddNode') ? a:node.path.str()
+        \ : fnamemodify(a:node.path.str(), ':h')
+  let dir = new =~# '/$'
+  let new = simplify(fnamemodify(expand(new =~# '^[/~]' ? new : base . '/' . new), ':p'))
+  let new = substitute(new, '/$', '', '') . (dir ? '/' : '')
+  " NERDTree's own action, its path question answered with the full path
+  call feedkeys("\<C-u>" . new . "\<CR>", 'n')
+  call a:Then()
+endfunction
+function! VimzipTreeAdd() abort
+  let node = g:NERDTreeDirNode.GetSelected()
+  if !empty(node)
+    call s:TreeMenu(node, 'New file (a folder: end with /): ', node.path.str() . '/', function('NERDTreeAddNode'))
+  endif
+endfunction
 function! VimzipTreeMove() abort
   let node = g:NERDTreeFileNode.GetSelected()
-  if empty(node)
-    return
+  if !empty(node)
+    call s:TreeMenu(node, 'Rename or move to: ', node.path.str(), function('NERDTreeMoveNode'))
   endif
-  let old = node.path.str()
-  let new = trim(input('Rename or move to: ', old, 'file'))
-  if new ==# '' || new ==# old
-    return
+endfunction
+function! VimzipTreeCopy() abort
+  let node = g:NERDTreeFileNode.GetSelected()
+  if !empty(node)
+    call s:TreeMenu(node, 'Copy to: ', node.path.str(), function('NERDTreeCopyNode'))
   endif
-  if new !~# '^[/~]'
-    let new = fnamemodify(old, ':h') . '/' . new
-  endif
-  let new = simplify(fnamemodify(expand(new), ':p'))
-  " NERDTree's own move, its path question answered with the full path
-  call feedkeys("\<C-u>" . new . "\<CR>", 'n')
-  call NERDTreeMoveNode()
 endfunction
 
 " termdebug
