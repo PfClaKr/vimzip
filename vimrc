@@ -3868,12 +3868,13 @@ endfunction
 function! s:PairOpen(ch) abort
   let line = getline('.')
   let next = line[col('.') - 1]
-  let prev = col('.') > 1 ? line[col('.') - 2] : ''
+  " (the whole character before: a byte of a Hangul letter is no letter)
+  let prev = matchstr(strpart(line, 0, col('.') - 1), '.$')
   if !s:PairsOn() || (has_key(s:no_pair, a:ch) && &filetype =~# s:no_pair[a:ch]) || next !~# '^\%(\s\|[)\]}>,;:.=]\|\)$'
     return a:ch
   endif
   " (a quote right after a letter or another quote is an apostrophe or a closing one)
-  if a:ch =~# '[''"`]' && prev =~# '\w\|[''"`\\]'
+  if a:ch =~# '[''"`]' && prev =~# '\k\|[''"`\\]'
     return a:ch
   endif
   return a:ch . s:pairs[a:ch] . "\<C-g>U\<Left>"
@@ -3912,7 +3913,7 @@ inoremap <expr> <silent> <CR> <SID>PairCR()
 function! s:WordMark() abort
   let word = &buftype ==# '' && mode() ==# 'n' && get(g:, 'vimzip_word_highlight', 1) ? expand('<cword>') : ''
   " (a name, under the cursor: not the next word on the line, not a number or punctuation)
-  if word !~# '^\k*\a\k*$' || getline('.')[col('.') - 1] !~# '\k'
+  if word !~# '^\k\+$' || word =~# '^[0-9_]\+$' || matchstr(getline('.'), '\%' . col('.') . 'c.') !~# '\k'
     let word = ''
   endif
   " (nor a keyword: every int or return lit up)
