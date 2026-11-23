@@ -2162,13 +2162,17 @@ function! s:ImgShow(buf, out, size) abort
     let width = eval(join(map(copy(runs), 'v:val[0]'), '+'))
     let text = repeat(' ', max([0, (a:size[0] - width) / 2]) + 1)
     for [n, top, bottom] in runs
-      let name = 'VimzipImg_' . top . '_' . bottom
-      if !has_key(s:img_hl, name)
-        let s:img_hl[name] = gui ? printf('guifg=#%s guibg=#%s', top, bottom) : printf('ctermfg=%s ctermbg=%s', top, bottom)
-        execute 'highlight' name s:img_hl[name]
-        call prop_type_add(name, {'highlight': name})
-      endif
-      call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * 3, name])
+      " a group per color, not per pair of them (vim has room for about 20000 groups): one
+      " property gives the upper half's color, another the lower's, and vim combines the two
+      for [name, hl] in [['VimzipImgF_' . top, (gui ? 'guifg=#' : 'ctermfg=') . top],
+            \            ['VimzipImgB_' . bottom, (gui ? 'guibg=#' : 'ctermbg=') . bottom]]
+        if !has_key(s:img_hl, name)
+          let s:img_hl[name] = hl
+          execute 'highlight' name hl
+          call prop_type_add(name, {'highlight': name})
+        endif
+        call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * 3, name])
+      endfor
       let text .= repeat('▀', str2nr(n))
     endfor
     call add(lines, text)
