@@ -117,6 +117,10 @@ function! s:AutoSave() abort
     " a failed save says so (no permission, disk full, an encoding that cannot be written):
     " silently the file stayed as it was while the tab looked saved
     try
+      " changed on disk meanwhile (another vim, git, a formatter): first vim's usual question, keep
+      " this version (OK, then "really write?" confirms) or load the file's (Load); the bare
+      " "really write? (y/n)" alone offered no way to get the file's version
+      checktime %
       silent update
     catch
       echohl ErrorMsg
