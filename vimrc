@@ -2377,9 +2377,18 @@ function! s:PickProject() abort
         \   '--header', 'Enter open (or a typed path)   Ctrl+a add   Ctrl+x remove   Ctrl+e edit the list',
         \   '--bind', 'enter:accept-or-print-query']}))
 endfunction
+function! s:Warn(msg) abort
+  echohl WarningMsg | echomsg a:msg | echohl None
+endfunction
 function! s:PickedProject(lines) abort
   let [query, key] = [get(a:lines, 0, ''), get(a:lines, 1, '')]
   let picked = filter(a:lines[2:], 'v:val !=# ""')
+  " a typed folder wins over the entry it happens to match ("~/work/ap" picked ~/work/api): always
+  " for Ctrl+a, for Enter when it is one
+  let typed = fnamemodify(expand(trim(query)), ':p:s?/$??')
+  if query =~# '\S' && (key ==# 'ctrl-a' || (key ==# '' && query =~# '^\s*[~./]' && isdirectory(typed)))
+    let picked = [query]
+  endif
   let dirs = map(empty(picked) ? (query ==# '' ? [] : [query]) : picked, 'fnamemodify(expand(trim(v:val)), ":p:s?/$??")')
   if key ==# 'ctrl-e'
     if !filereadable(s:projects_file)
@@ -2393,7 +2402,9 @@ function! s:PickedProject(lines) abort
     for d in dirs
       if key ==# 'ctrl-a'
         if !isdirectory(d)
-          echohl WarningMsg | echo 'Not a folder: ' . fnamemodify(d, ':~') | echohl None
+          " (after the list's window has closed and the screen is drawn again, or it is not seen)
+          let msg = 'Not a folder: ' . fnamemodify(d, ':~')
+          call timer_start(50, {-> s:Warn(msg)})
           return
         endif
         call filter(listed, 'v:val !=# d')
