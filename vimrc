@@ -374,7 +374,7 @@ function! s:CodeSyntax() abort
     endif
     execute 'syntax match vimzipConstant /\<\u[A-Z0-9_]\+\>/ display' . in
     unlet! b:current_syntax
-    execute 'runtime! syntax/' . &syntax . '.vim'
+    execute 'runtime! syntax/' . &syntax . '.vim syntax/' . &syntax . '/*.vim'
   endif
   highlight default link vimzipFunction Function
   highlight default link vimzipType Type
@@ -535,12 +535,15 @@ function! s:GuessIncludes(root, dir, ...) abort
     if stridx(fnamemodify(d, ':h'), a:root) == 0
       let incs[fnamemodify(d, ':h')] = 1
     endif
+    if len(incs) > 300  " (too many to guess from)
+      return 0
+    endif
   endfor
   let dirs = {}
   for f in filter(files, 'v:val !~? hdr')
     let dirs[fnamemodify(f, ':h')] = f
   endfor
-  if empty(dirs) || len(incs) > 300 || len(dirs) > 2000
+  if empty(dirs) || len(dirs) > 2000
     return 0
   endif
   call mkdir(a:dir, 'p')
@@ -571,20 +574,32 @@ function! s:HeaderEntries(root, json) abort
   let from = filter(copy(have), 'v:val.file =~# lang')
   let from = empty(from) ? have : from
   let dirs = uniq(sort(map(systemlist('rg --files -g "*.{h,hh,hpp,hxx,inl}" ' . shellescape(a:root)), 'fnamemodify(v:val, ":h")')))
+  " the nearest source folder: one under the deepest folder the two share (not a test's, if one as
+  " near is not), found by walking up (comparing every pair took a minute on 1,500 folders)
+  let test = '/tests\=\(/\|$\)'
+  let near = {}
+  for [sd, e] in items(from)
+    let [p, t] = [sd, sd =~# test]
+    while 1
+      let cur = get(near, p, {})
+      if !empty(cur) && (!cur.test || t)
+        break
+      endif
+      let near[p] = {'e': e, 'test': t}
+      let up = fnamemodify(p, ':h')
+      if up ==# p
+        break
+      endif
+      let p = up
+    endwhile
+  endfor
   let added = 0
   for d in filter(dirs, '!has_key(have, v:val)')[: 1999]
-    " the nearest: the source folder sharing the longest part of the path (not a test's, if as near)
-    let [best, len] = [{}, -1]
-    for [sd, e] in items(from)
-      let n = 0
-      while n < len(d) && n < len(sd) && d[n] ==# sd[n]
-        let n += 1
-      endwhile
-      let n = n * 2 + (sd =~# '/tests\=\(/\|$\)' ? 0 : 1)
-      if n > len
-        let [best, len] = [e, n]
-      endif
-    endfor
+    let p = d
+    while !has_key(near, p) && fnamemodify(p, ':h') !=# p
+      let p = fnamemodify(p, ':h')
+    endwhile
+    let best = get(near, p, {'e': {}}).e
     if empty(best)
       break
     endif
