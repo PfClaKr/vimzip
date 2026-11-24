@@ -4619,8 +4619,13 @@ function! s:MdInline(text) abort
       let t = t[len(m[0]) :]
       continue
     endif
-    let m = matchlist(t, '^\([*_]\)\(\S.\{-}\)\1\%(\w\)\@!')
-    if !empty(m) && (out ==# '' || out[-1:] !~# '\w')
+    " (* also inside a word, as Markdown has it; _ not: snake_case_names)
+    let m = matchlist(t, '^\(\*\)\(\S.\{-}\S\|\S\)\*')
+    if empty(m)
+      let m = matchlist(t, '^\(_\)\(\S.\{-}\)_\%(\w\)\@!')
+      let m = !empty(m) && (out ==# '' || out[-1:] !~# '\w') ? m : []
+    endif
+    if !empty(m)
       let [inner, ip] = s:MdInline(m[2])
       call add(props, [len(out) + 1, len(inner), 'vimzip_md_italic'])
       call extend(props, map(ip, '[v:val[0] + len(out), v:val[1], v:val[2]]'))
