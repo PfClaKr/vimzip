@@ -1361,27 +1361,6 @@ let g:NERDTreeAutoDeleteBuffer = 1
 " every 0.3 s, 0.5 s of vim each time with 10000 changed files); after a save, and when the folders
 " or git's index or HEAD change (a commit in the terminal, see s:TreeSyncHere)
 let g:NERDTreeGitStatusUpdateOnCursorHold = 0
-" (after a save its own way went to the tree's window and back when the colors came: saved while
-" typing, Ctrl+s, that put the cursor one letter back or ended insert mode; asked once in normal mode)
-let g:NERDTreeGitStatusUpdateOnWrite = 0
-function! s:TreeGitWrite(file, ...) abort
-  if mode() !=# 'n'
-    augroup vimzip_tree_git_later
-      autocmd!
-      execute 'autocmd InsertLeave * ++once call timer_start(0, {-> s:TreeGitWrite(' . string(a:file) . ')})'
-    augroup END
-    return
-  endif
-  let sid = get(getscriptinfo({'name': 'nerdtree_plugin/git_status.vim'}), 0, {'sid': 0}).sid
-  if sid && exists('g:NERDTree') && g:NERDTree.IsOpen()
-    silent! call call('<SNR>' . sid . '_onFileUpdate', [a:file])
-  endif
-endfunction
-augroup vimzip_tree_git
-  autocmd!
-  " (a moment later: in a Ctrl+s from insert mode, vim is in normal mode until the save is done)
-  autocmd BufWritePost * call timer_start(0, function('s:TreeGitWrite', [expand('<afile>:p')]))
-augroup END
 " a failed background status (any line on git's stderr) is not an error message in the middle of
 " typing: the colors are redone at the next save, or within 30 s
 let g:NERDTreeGitStatusLogLevel = 4
@@ -1551,6 +1530,19 @@ function! s:FastNERDTree() abort
     let g:NERDTreeDirNode._renderToString = function('s:NERDTreeRender')
     let g:NERDTreeFileNode._renderToString = function('s:NERDTreeRender')
   endif
+  " the git colors arriving while typing wait for the typing to stop: putting them in went to the
+  " tree's window and back, which put the cursor one letter back or ended insert mode (a save
+  " just before, Ctrl+s or the autosave on Esc, then typing again at once)
+  if exists('g:NERDTreePathNotifier') && !exists('s:tree_git_ui')
+    for L in g:NERDTreePathNotifier.GetListenersForEvent('init')
+      " (get() with a default gives the default here, not the partial's dictionary)
+      let d = type(L) == v:t_func ? get(L, 'dict') : {}
+      if type(d) == v:t_dict && has_key(d, 'TryUpdateNERDTreeUI')
+        let s:tree_git_ui = d.TryUpdateNERDTreeUI
+        let d.TryUpdateNERDTreeUI = function('s:TreeGitUI')
+      endif
+    endfor
+  endif
   if exists('g:NERDTreeMenuItem')
     let ours = {'NERDTreeAddNode': 'VimzipTreeAdd', 'NERDTreeMoveNode': 'VimzipTreeMove', 'NERDTreeCopyNode': 'VimzipTreeCopy'}
     for item in g:NERDTreeMenuItem.All()
@@ -1559,6 +1551,17 @@ function! s:FastNERDTree() abort
       endif
     endfor
   endif
+endfunction
+function! s:TreeGitUI() dict abort
+  if mode() !=# 'n'
+    let s:tree_git_wait = self
+    augroup vimzip_tree_git_later
+      autocmd!
+      autocmd InsertLeave * ++once call timer_start(0, {-> s:tree_git_wait.TryUpdateNERDTreeUI()})
+    augroup END
+    return
+  endif
+  call call(s:tree_git_ui, [], self)
 endfunction
 " the tree's m menu (add, move / rename, copy): a path typed without its folder is taken in the
 " selected node's folder (calc2.c: renamed where it is, new.c: created in the selected folder), not
