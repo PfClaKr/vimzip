@@ -3197,7 +3197,8 @@ nnoremap <silent> <leader>cl :Lsp<CR>
 " a message on one line, cut to the screen's width (a longer one stopped everything at "Press
 " ENTER" on a narrow screen)
 function! s:Say(msg, ...) abort
-  let room = &columns - 12
+  " (at least one cell: in a terminal 12 wide or less the cutting never ended)
+  let room = max([1, &columns - 12])
   let msg = a:msg
   if strdisplaywidth(msg) > room
     " (by screen cells: a Hangul letter takes two)
