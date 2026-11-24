@@ -1461,6 +1461,9 @@ let g:tagbar_ctags_bin = $VIMZIP . '/bin/vimzip-ctags'
 let g:tagbar_file_size_limit = 3000000
 " fzf preview beside the list, or above it when it would be under 40 columns wide (a narrow screen)
 let g:fzf_preview_window = ['right,50%,<40(up,50%)', 'ctrl-/']
+" the same keys as in the tree, the problems and a peeked definition: Enter opens, Ctrl+v beside,
+" Ctrl+x below (Ctrl+t's vim tab page left out: vimzip's tabs are the files)
+let g:fzf_action = {'ctrl-v': 'vsplit', 'ctrl-x': 'split'}
 " a taller popup than fzf.vim's 60%, so the preview shows more of the file
 let g:fzf_layout = {'window': {'width': 0.9, 'height': 0.8}}
 " scrolling the preview (the file on the right) like vim: Ctrl+d / Ctrl+u half a page, Ctrl+f / Ctrl+b
@@ -1945,6 +1948,23 @@ endfunction
 
 " ─── windows, tabs and quitting ──────────────────────────────────────────────────────────────────
 " switch/close buffers without touching the tree or terminal windows
+" the place on this line of a list (problems, search results) beside or below the editor
+function! s:QfOpen(how) abort
+  let loc = getwininfo(win_getid())[0].loclist
+  let items = loc ? getloclist(0) : getqflist()
+  let it = get(items, line('.') - 1, {})
+  if !get(it, 'bufnr', 0)
+    return
+  endif
+  if !loc
+    call setqflist([], 'a', {'idx': line('.')})
+  endif
+  call s:EditWin()
+  execute a:how
+  execute 'buffer' it.bufnr
+  call cursor(it.lnum, max([1, it.col]))
+  normal! zz
+endfunction
 function! s:EditWin() abort
   if &buftype !=# '' || exists('b:NERDTree')
     let e = s:EditorWin()
@@ -2564,8 +2584,8 @@ function! s:RecentProjects() abort
 endfunction
 function! s:PickProject() abort
   call fzf#run(fzf#wrap({'source': s:RecentProjects(), 'sink*': function('s:PickedProject'),
-        \ 'options': ['--prompt', 'Project> ', '--print-query', '--expect', 'ctrl-a,ctrl-x,ctrl-e',
-        \   '--header', 'Enter open (or a typed path)   Ctrl+a add (a folder tree)   Ctrl+x remove   Ctrl+e edit the list',
+        \ 'options': ['--prompt', 'Project> ', '--print-query', '--expect', 'ctrl-a,ctrl-d,ctrl-e',
+        \   '--header', 'Enter open (or a typed path)   Ctrl+a add (a folder tree)   Ctrl+d remove   Ctrl+e edit the list',
         \   '--bind', 'enter:accept-or-print-query']}))
 endfunction
 function! s:PickedProject(lines) abort
@@ -2597,7 +2617,7 @@ function! s:PickedProject(lines) abort
     endif
     call s:Buf('edit ' . fnameescape(s:projects_file))
     return
-  elseif key ==# 'ctrl-x'
+  elseif key ==# 'ctrl-d'
     let listed = s:ReadList(s:projects_file)
     let hidden = s:ReadList(s:projects_hidden)
     for d in dirs
@@ -2912,6 +2932,9 @@ augroup vimzip
   autocmd BufReadPost fugitive://* setlocal nobuflisted
   " and so do the quickfix and location lists (Tab and Space q would show them in the editor)
   autocmd FileType qf setlocal nobuflisted
+  autocmd FileType qf nnoremap <buffer> <silent> <C-v> :call <SID>QfOpen('vsplit')<CR>
+        \| nnoremap <buffer> <silent> <C-x> :call <SID>QfOpen('split')<CR>
+        \| nnoremap <buffer> <silent> q :close<CR>
   " the timeline lives under the tree: it goes away and comes back with it
   autocmd BufWinLeave NERD_tree_* call timer_start(0, {-> s:TreeGone()})
   autocmd BufWinEnter NERD_tree_* call timer_start(0, {-> s:TreeBack()})
@@ -2920,6 +2943,8 @@ augroup vimzip
         \ && bufnr('') != bufnr(s:tl.file) | call timer_start(0, {-> s:TimelineCloseDiff(1)}) | endif
   autocmd BufEnter * call s:RevealInTree()
   autocmd BufWritePost * call timer_start(0, {-> s:RevealInTree()})
+  " (open beside / below as in every list: the tree's own s / i keep working)
+  autocmd FileType nerdtree nmap <buffer> <silent> <C-v> s| nmap <buffer> <silent> <C-x> i
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
   " long names stay on one line, cut with … (the selected one is shown whole, see s:TreeHover)
   autocmd FileType nerdtree setlocal nowrap list listchars=extends:…
@@ -3886,6 +3911,8 @@ function! s:Build() abort
     execute 'silent! bwipeout' blank
   endif
   setlocal winfixheight nonumber nocursorline signcolumn=no nolist
+  " (q closes it once the build is over, as it closes the other panels)
+  nnoremap <buffer> <silent> q :close<CR>
   call setbufvar(s:build, '&buflisted', 0)
   let s:set[win_getid()] = winheight(0)
   call win_gotoid(from)
@@ -4770,7 +4797,7 @@ function! s:PeekShow(file, lnum, lines) abort
   let shown = a:lines[first - 1 : first + 199]
   let height = min([15, len(shown), &lines - 6])
   let s:peek = {'file': a:file, 'lnum': a:lnum}
-  let id = popup_atcursor(shown, {'title': ' ' . fnamemodify(a:file, ':~:.') . ':' . a:lnum . '  Enter: go there  Esc: close ',
+  let id = popup_atcursor(shown, {'title': ' ' . fnamemodify(a:file, ':~:.') . ':' . a:lnum . '  Enter: go there (Ctrl+v beside, Ctrl+x below)  Esc: close ',
         \ 'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'padding': [0, 1, 0, 1],
         \ 'maxheight': height, 'minheight': height, 'minwidth': min([80, &columns - 10]), 'maxwidth': &columns - 10,
         \ 'scrollbar': 1, 'moved': 'any', 'filter': function('s:PeekKey'), 'firstline': 1})
@@ -4789,14 +4816,14 @@ function! s:PeekKey(id, key) abort
   if has_key(steps, a:key)
     call popup_setoptions(a:id, {'firstline': max([1, min([n, top + steps[a:key]])])})
     return 1
-  elseif a:key ==# "\<CR>"
+  elseif a:key ==# "\<CR>" || a:key ==# "\<C-v>" || a:key ==# "\<C-x>"
     call popup_close(a:id)
     " (from a panel, the terminal's or a list's: in the editor, not over the panel)
     if &buftype !=# ''
       call s:EditWin()
     endif
     normal! m'
-    execute 'edit' fnameescape(s:peek.file)
+    execute (a:key ==# "\<C-v>" ? 'vsplit' : a:key ==# "\<C-x>" ? 'split' : 'edit') fnameescape(fnamemodify(s:peek.file, ':~:.'))
     call cursor(s:peek.lnum, 1)
     normal! zz
     return 1
@@ -4841,15 +4868,16 @@ function! s:SymbolsGot(query, result) abort
           \ get(i, 'containerName', ''), file, line))
   endfor
   call s:EditWin()
-  call fzf#run(fzf#wrap({'source': rows, 'sink': function('s:SymbolPicked'),
+  call fzf#run(fzf#wrap({'source': rows, 'sink*': function('s:SymbolPicked'),
         \ 'options': ['--prompt', 'Symbol> ', '--delimiter', "\t", '--tabstop', '4', '--query', a:query,
-        \   '--header', 'Enter open   (symbol, kind, in, where)']}))
+        \   '--expect', 'ctrl-v,ctrl-x', '--header', 'Enter open   Ctrl+v beside   Ctrl+x below   (symbol, kind, in, where)']}))
 endfunction
-function! s:SymbolPicked(row) abort
-  let m = matchlist(a:row, '\t\([^\t]*\):\(\d\+\)$')
+function! s:SymbolPicked(lines) abort
+  let [key, row] = [get(a:lines, 0, ''), get(a:lines, 1, '')]
+  let m = matchlist(row, '\t\([^\t]*\):\(\d\+\)$')
   if !empty(m)
     normal! m'
-    execute 'edit' fnameescape(expand(m[1]))
+    execute get({'ctrl-v': 'vsplit', 'ctrl-x': 'split'}, key, 'edit') fnameescape(expand(m[1]))
     call cursor(str2nr(m[2]), 1)
     normal! zz
   endif
@@ -4940,6 +4968,7 @@ function! s:GitPanel(what) abort
     execute 'silent! bwipeout' blank
   endif
   setlocal winfixheight nonumber nocursorline signcolumn=no nolist
+  nnoremap <buffer> <silent> q :close<CR>
   call setbufvar(buf, '&buflisted', 0)
   let s:git_panel = buf
   " (focus stays with the files, unless git has a question: a user name, password or passphrase,
@@ -5303,6 +5332,7 @@ function! s:MdPreview() abort
   execute 'rightbelow vertical' max([40, winwidth(0) / 2]) 'new'
   setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted wrap linebreak breakindent nonumber
   setlocal nocursorline signcolumn=no nolist nomodeline filetype=vimzipmdpreview
+  nnoremap <buffer> <silent> q :close<CR>
   execute 'silent file' fnameescape('Preview ' . fnamemodify(bufname(src), ':t'))
   let b:vimzip_md_source = src
   call setbufvar(src, 'vimzip_md_preview', bufnr(''))

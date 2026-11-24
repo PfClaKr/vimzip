@@ -52,7 +52,9 @@ Opens the file tree and the files you had open last time. Files save themselves.
   `let g:vimzip_cell_pixels = [10, 20]` a cell's size when the terminal does not tell it
 
 Vim's own keys all work. The added ones are grouped under `Space` by topic (`f` find, `g` git,
-`c` code, `t` terminal, `d` debug). **`Space ?` shows every key and `:` command.**
+`c` code, `t` terminal, `d` debug). Every list takes the same keys: `Enter` opens, `Ctrl+v` beside,
+`Ctrl+x` below (searches, the tree, problems, a peeked definition), and `q` closes a list or
+panel. **`Space ?` shows every key and `:` command.**
 
 ![Space ?](docs/keys.png)
 
@@ -71,7 +73,7 @@ found; `let g:vimzip_lite = 0` (or `1`) decides for it.
 
 `Space fp` lists your projects: the ones you added (`Ctrl+a` adds the typed folder, or opens a
 folder tree to pick one with `a`; `Ctrl+e` edits the list, `~/.config/vimzip/projects`), then the
-recently opened ones; `Ctrl+x` takes one off.
+recently opened ones; `Ctrl+d` takes one off.
 
 `:Theme` lists the status bar themes and `:Theme nord` tries one. Code is colored like VSCode's
 Dark+ (functions, variables, types and constants apart); `colorscheme habamax` (or any other) in
