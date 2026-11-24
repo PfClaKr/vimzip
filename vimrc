@@ -1461,6 +1461,9 @@ let g:tagbar_ctags_bin = $VIMZIP . '/bin/vimzip-ctags'
 let g:tagbar_file_size_limit = 3000000
 " fzf preview beside the list, or above it when it would be under 40 columns wide (a narrow screen)
 let g:fzf_preview_window = ['right,50%,<40(up,50%)', 'ctrl-/']
+" the same keys as in the tree, the problems and a peeked definition: Enter opens, Ctrl+v beside,
+" Ctrl+x below (Ctrl+t's vim tab page left out: vimzip's tabs are the files)
+let g:fzf_action = {'ctrl-v': 'vsplit', 'ctrl-x': 'split'}
 " a taller popup than fzf.vim's 60%, so the preview shows more of the file
 let g:fzf_layout = {'window': {'width': 0.9, 'height': 0.8}}
 " scrolling the preview (the file on the right) like vim: Ctrl+d / Ctrl+u half a page, Ctrl+f / Ctrl+b
@@ -1945,6 +1948,23 @@ endfunction
 
 " ─── windows, tabs and quitting ──────────────────────────────────────────────────────────────────
 " switch/close buffers without touching the tree or terminal windows
+" the place on this line of a list (problems, search results) beside or below the editor
+function! s:QfOpen(how) abort
+  let loc = getwininfo(win_getid())[0].loclist
+  let items = loc ? getloclist(0) : getqflist()
+  let it = get(items, line('.') - 1, {})
+  if !get(it, 'bufnr', 0)
+    return
+  endif
+  if !loc
+    call setqflist([], 'a', {'idx': line('.')})
+  endif
+  call s:EditWin()
+  execute a:how
+  execute 'buffer' it.bufnr
+  call cursor(it.lnum, max([1, it.col]))
+  normal! zz
+endfunction
 function! s:EditWin() abort
   if &buftype !=# '' || exists('b:NERDTree')
     let e = s:EditorWin()
@@ -2564,8 +2584,8 @@ function! s:RecentProjects() abort
 endfunction
 function! s:PickProject() abort
   call fzf#run(fzf#wrap({'source': s:RecentProjects(), 'sink*': function('s:PickedProject'),
-        \ 'options': ['--prompt', 'Project> ', '--print-query', '--expect', 'ctrl-a,ctrl-x,ctrl-e',
-        \   '--header', 'Enter open (or a typed path)   Ctrl+a add (a folder tree)   Ctrl+x remove   Ctrl+e edit the list',
+        \ 'options': ['--prompt', 'Project> ', '--print-query', '--expect', 'ctrl-a,ctrl-d,ctrl-e',
+        \   '--header', 'Enter open (or a typed path)   Ctrl+a add (a folder tree)   Ctrl+d remove   Ctrl+e edit the list',
         \   '--bind', 'enter:accept-or-print-query']}))
 endfunction
 function! s:PickedProject(lines) abort
@@ -2597,7 +2617,7 @@ function! s:PickedProject(lines) abort
     endif
     call s:Buf('edit ' . fnameescape(s:projects_file))
     return
-  elseif key ==# 'ctrl-x'
+  elseif key ==# 'ctrl-d'
     let listed = s:ReadList(s:projects_file)
     let hidden = s:ReadList(s:projects_hidden)
     for d in dirs
@@ -2912,6 +2932,9 @@ augroup vimzip
   autocmd BufReadPost fugitive://* setlocal nobuflisted
   " and so do the quickfix and location lists (Tab and Space q would show them in the editor)
   autocmd FileType qf setlocal nobuflisted
+  autocmd FileType qf nnoremap <buffer> <silent> <C-v> :call <SID>QfOpen('vsplit')<CR>
+        \| nnoremap <buffer> <silent> <C-x> :call <SID>QfOpen('split')<CR>
+        \| nnoremap <buffer> <silent> q :close<CR>
   " the timeline lives under the tree: it goes away and comes back with it
   autocmd BufWinLeave NERD_tree_* call timer_start(0, {-> s:TreeGone()})
   autocmd BufWinEnter NERD_tree_* call timer_start(0, {-> s:TreeBack()})
@@ -2920,6 +2943,8 @@ augroup vimzip
         \ && bufnr('') != bufnr(s:tl.file) | call timer_start(0, {-> s:TimelineCloseDiff(1)}) | endif
   autocmd BufEnter * call s:RevealInTree()
   autocmd BufWritePost * call timer_start(0, {-> s:RevealInTree()})
+  " (open beside / below as in every list: the tree's own s / i keep working)
+  autocmd FileType nerdtree nmap <buffer> <silent> <C-v> s| nmap <buffer> <silent> <C-x> i
   autocmd FileType nerdtree call s:TreeIgnoredSyntax()
   " long names stay on one line, cut with … (the selected one is shown whole, see s:TreeHover)
   autocmd FileType nerdtree setlocal nowrap list listchars=extends:…
@@ -3018,7 +3043,7 @@ function! s:ViewHeader(buf, info) abort
         \ kb >= 1024 ? printf('%.1f MB', kb / 1024.0) : max([kb, 1]) . ' KB')
 endfunction
 " pictures in real pixels where the terminal can draw them (g:vimzip_images: 'auto', or 'sixel',
-" 'kitty', 'blocks'): kitty and Ghostty by kitty's own way, the terminals that tell vim they draw
+" 'kitty', 'octants', 'blocks'): kitty and Ghostty by kitty's own way, the terminals that tell vim they draw
 " sixel (Windows Terminal, Konsole, WezTerm, foot, xterm, VTE built with it) by sixel; not inside
 " tmux. Elsewhere half blocks, two pixels a cell.
 function! s:Pixels(buf) abort
@@ -3034,6 +3059,13 @@ function! s:Pixels(buf) abort
   endif
   " (the answer to vim's question at start, DA1: 4 among its numbers is sixel)
   return v:termda1 =~# '[?;]4[;c]' ? 'sixel' : ''
+endfunction
+" without pixels, a cell split in 2 x 4 parts (the octants of Unicode 16) where the terminal draws
+" those characters itself, as VTE 0.80 does (GNOME Terminal, Terminator...): four times finer than half
+" blocks. g:vimzip_images = 'octants' for others whose font has them.
+function! s:Octants() abort
+  let want = get(g:, 'vimzip_images', 'auto')
+  return want ==# 'octants' || want ==# 'auto' && str2nr($VTE_VERSION) >= 8000
 endfunction
 " a cell's size in screen pixels: the terminal's, or g:vimzip_cell_pixels
 function! s:CellPixels() abort
@@ -3087,7 +3119,7 @@ function! s:ImgRender(buf) abort
     let cmd = [s:view, kind, s:ViewFile(a:buf), size[0], size[1], cell[0], cell[1]]
     let Done = {-> s:PixShow(a:buf, out, key)}
   else
-    let cmd = [s:view, 'image', s:ViewFile(a:buf), size[0], size[1]] + (&termguicolors ? [] : ['256'])
+    let cmd = [s:view, s:Octants() ? 'cells' : 'image', s:ViewFile(a:buf), size[0], size[1]] + (&termguicolors ? [] : ['256'])
     let Done = {-> s:ImgShow(a:buf, out, size)}
   endif
   call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(out, 'error: ' . l)},
@@ -3119,15 +3151,18 @@ function! s:BlockRows(rows, width) abort
     let runs = map(split(row), 'split(v:val, ":")')
     let width = eval(join(map(copy(runs), 'v:val[0]'), '+'))
     let text = repeat(' ', max([0, (a:width - width) / 2]) + 1)
-    for [n, top, bottom] in runs
+    for run in runs
+      " (half blocks: the upper half in the first color; octants: the character says which parts)
+      let [n, top, bottom] = run[: 2]
+      let ch = len(run) > 3 ? nr2char(str2nr(run[3], 16)) : '▀'
       " a group per color, not per pair of them (vim has room for about 20000 groups): one
       " property gives the upper half's color, another the lower's, and vim combines the two
       for [name, hl] in [['VimzipImgF_' . top, (gui ? 'guifg=#' : 'ctermfg=') . top],
             \            ['VimzipImgB_' . bottom, (gui ? 'guibg=#' : 'ctermbg=') . bottom]]
         call s:ImgGroup(name, hl)
-        call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * 3, name])
+        call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * len(ch), name])
       endfor
-      let text .= repeat('▀', str2nr(n))
+      let text .= repeat(ch, str2nr(n))
     endfor
     call add(lines, text)
   endfor
@@ -3336,20 +3371,28 @@ function! s:PdfShow(buf, out, err, tool) abort
   call s:ViewFill(a:buf, lines)
 endfunction
 function! s:ViewExternal() abort
-  let f = s:ViewFile(bufnr(''))
+  if s:OpenExternal(s:ViewFile(bufnr('')))
+    echo 'Opened in the system viewer: ' . expand('%:t')
+  else
+    echohl WarningMsg | echo 'No system viewer here (xdg-open), e.g. over ssh' | echohl None
+  endif
+endfunction
+" a file or link in the system's own program (viewer, browser): 0 where there is none (over ssh)
+function! s:OpenExternal(target) abort
+  let t = a:target
   if executable('wslpath') && executable('explorer.exe') && !executable('wslview')
-    let cmd = ['explorer.exe', trim(system('wslpath -w ' . shellescape(f)))]
+    " (a link as it is; a file by its Windows path)
+    let cmd = ['explorer.exe', t =~# '^\a\+://' ? t : trim(system('wslpath -w ' . shellescape(t)))]
   else
     " (not open: on some Linux systems that is openvt, which starts a console)
-    let cmd = map(filter(['xdg-open', 'wslview'], 'executable(v:val)')[: 0], '[v:val, f]')
+    let cmd = map(filter(['xdg-open', 'wslview'], 'executable(v:val)')[: 0], '[v:val, t]')
     let cmd = empty(cmd) ? [] : cmd[0]
   endif
-  if empty(cmd)
-    echohl WarningMsg | echo 'No system viewer here (xdg-open), e.g. over ssh' | echohl None
-    return
+  if empty(cmd) || $DISPLAY ==# '' && $WAYLAND_DISPLAY ==# '' && cmd[0] ==# 'xdg-open'
+    return 0
   endif
   call job_start(cmd, {'stoponexit': '', 'in_io': 'null', 'out_io': 'null', 'err_io': 'null'})
-  echo 'Opened in the system viewer: ' . expand('%:t')
+  return 1
 endfunction
 " no line numbers or cursor line over a picture; redrawn to fit after a resize
 let s:view_opts = 'nonumber norelativenumber nocursorline nolist nowrap signcolumn=no colorcolumn= foldcolumn=0'
@@ -3436,6 +3479,149 @@ nnoremap <C-h> <C-w>h
 nnoremap <C-j> <C-w>j
 nnoremap <C-k> <C-w>k
 nnoremap <C-l> <C-w>l
+
+" links and file names: Ctrl+click (VSCode's), or gx at the cursor, in the files and the terminals.
+" A link opens in the browser (over ssh, where there is none, it is copied); a file name, with
+" its :line:col (file.c:12:5, file.c(12), Python's File "x.py", line 12, a/ b/ of a diff), in the
+" editor at that place; a folder in the tree. Ctrl+click on anything else goes to its definition.
+function! s:LinkAt(text, col, dir) abort
+  let [t, c] = [a:text, a:col]
+  " (the match of pattern that covers the column: [text, start] or [])
+  let Covering = {pat -> s:Covering(t, c, pat)}
+  " (anywhere on a Markdown link, its text too: where it goes)
+  let md = Covering('\[[^\]]*\]([^) ]\+\%(\s\+"[^"]*"\)\=)')
+  let md = empty(md) ? [] : [matchstr(md[0], '\](\zs[^) ]\+'), md[1]]
+  let m = !empty(md) ? md : Covering('\%(https\=\|ftp\|file\)://[^[:space:]<>"''`]\+')
+  if !empty(m) && m[0] =~# '^\a\+://'
+    let url = s:LinkTrim(m[0])
+    if url !~# '^file://'
+      return ['url', url]
+    endif
+    let m = [substitute(url, '^file://', '', ''), 0]
+  endif
+  " Python: File "x.py", line 12
+  let py = matchlist(t, 'File "\([^"]\+\)", line \(\d\+\)')
+  if !empty(py) && c > stridx(t, 'File "') && c <= matchend(t, 'File "[^"]\+", line \d\+')
+    return s:LinkFile(py[1], str2nr(py[2]), 0, a:dir)
+  endif
+  if empty(m)
+    let m = Covering('\f\+\%(:\d\+\%(:\d\+\)\=\|(\d\+\%(,\s*\d\+\)\=)\)\=')
+  endif
+  if empty(m)
+    return []
+  endif
+  let p = matchlist(m[0], '^\(.\{-}\)\%(:\(\d\+\)\%(:\(\d\+\)\)\=\|(\(\d\+\)\%(,\s*\(\d\+\)\)\=)\)\=$')
+  return s:LinkFile(p[1], str2nr(p[2] . p[4]), str2nr(p[3] . p[5]), a:dir)
+endfunction
+function! s:Covering(text, col, pat) abort
+  let start = 0
+  while 1
+    let [m, s, e] = matchstrpos(a:text, a:pat, start)
+    if s < 0 || s >= a:col
+      return []
+    endif
+    if a:col <= e
+      return [m, s]
+    endif
+    let start = max([e, s + 1])
+  endwhile
+endfunction
+" (a link's end without the sentence's punctuation, or a closing bracket it did not open)
+function! s:LinkTrim(url) abort
+  let u = substitute(a:url, '[.,;:!?''"]\+$', '', '')
+  while u =~# ')$' && count(u, ')') > count(u, '(')
+    let u = u[: -2]
+  endwhile
+  return u
+endfunction
+" ['file', path, line, col] for a name that is there (from this file's folder, then the project's),
+" else []
+function! s:LinkFile(name, lnum, col, dir) abort
+  let n = substitute(a:name, '[.,;:]\+$', '', '')
+  " (a name with a / or a . : a word in the code is a name to look up, not a file)
+  if n !~# '[/.]' || n =~# '^\.\+$'
+    return []
+  endif
+  let n = n =~# '^\~' ? expand(n) : n
+  let tries = n =~# '^/' ? [n] : [a:dir . '/' . n, getcwd() . '/' . n]
+  " (git's a/ and b/ in a diff)
+  if n =~# '^[ab]/'
+    call extend(tries, [a:dir . '/' . n[2 :], getcwd() . '/' . n[2 :]])
+  endif
+  for f in tries
+    if filereadable(f) || isdirectory(f)
+      return ['file', simplify(fnamemodify(f, ':p')), a:lnum, a:col]
+    endif
+  endfor
+  return []
+endfunction
+" the folder a terminal's shell is in now (it may have cd'd), else vim's
+function! s:TermCwd(buf) abort
+  let job = term_getjob(a:buf)
+  let pid = job_status(job) ==# 'run' ? job_info(job).process : 0
+  let d = pid ? resolve('/proc/' . pid . '/cwd') : ''
+  return isdirectory(d) ? d : getcwd()
+endfunction
+function! s:LinkOpen(link) abort
+  if a:link[0] ==# 'url'
+    if s:OpenExternal(a:link[1])
+      call s:Say('Opened in the browser: ' . a:link[1])
+    else
+      " (to the system's clipboard: vim's, else the terminal's own way, OSC 52; and to p)
+      if has('clipboard_working')
+        call setreg('+', a:link[1])
+      else
+        call echoraw("\e]52;c;" . base64_encode(str2blob([a:link[1]])) . "\x07")
+      endif
+      call setreg('"', a:link[1])
+      call s:Say('No browser here: the link is copied (' . a:link[1] . ')')
+    endif
+    return
+  endif
+  let [_, f, lnum, col] = a:link
+  call s:EditWin()
+  normal! m'
+  execute 'edit' fnameescape(fnamemodify(f, ':~:.'))
+  if lnum > 0
+    call cursor(lnum, max([1, col]))
+    normal! zz
+  endif
+endfunction
+" the link or file name in a window at a line and column
+function! s:LinkIn(win, lnum, col) abort
+  let b = winbufnr(a:win)
+  let dir = getbufvar(b, '&buftype') ==# 'terminal' ? s:TermCwd(b) : fnamemodify(bufname(b), ':p:h')
+  return s:LinkAt(get(getbufline(b, a:lnum), 0, ''), a:col, isdirectory(dir) ? dir : getcwd())
+endfunction
+function! s:CtrlClick() abort
+  let m = getmousepos()
+  if !m.winid || m.line < 1
+    return
+  endif
+  let link = s:LinkIn(m.winid, m.line, m.column)
+  if !empty(link)
+    call s:LinkOpen(link)
+  elseif getbufvar(winbufnr(m.winid), '&buftype') ==# ''
+    " (VSCode's Ctrl+click on a name: its definition)
+    call win_gotoid(m.winid)
+    call cursor(m.line, m.column)
+    call s:GoDef()
+  else
+    call win_gotoid(m.winid)
+  endif
+endfunction
+function! s:OpenAtCursor() abort
+  let link = s:LinkIn(win_getid(), line('.'), col('.'))
+  if empty(link)
+    call s:Say('No link or file name under the cursor')
+  else
+    call s:LinkOpen(link)
+  endif
+endfunction
+nnoremap <silent> <C-LeftMouse> :call <SID>CtrlClick()<CR>
+inoremap <silent> <C-LeftMouse> <C-o>:call <SID>CtrlClick()<CR>
+tnoremap <silent> <C-LeftMouse> <C-w>:call <SID>CtrlClick()<CR>
+nnoremap <silent> gx :call <SID>OpenAtCursor()<CR>
 
 " code: vim's gd / gr / K / ]e [e, VSCode's F12, Space c for the rest
 nnoremap <silent> <F12> :call <SID>GoDef()<CR>
@@ -3876,6 +4062,8 @@ function! s:Build() abort
     execute 'silent! bwipeout' blank
   endif
   setlocal winfixheight nonumber nocursorline signcolumn=no nolist
+  " (q closes it once the build is over, as it closes the other panels)
+  nnoremap <buffer> <silent> q :close<CR>
   call setbufvar(s:build, '&buflisted', 0)
   let s:set[win_getid()] = winheight(0)
   call win_gotoid(from)
@@ -4760,7 +4948,7 @@ function! s:PeekShow(file, lnum, lines) abort
   let shown = a:lines[first - 1 : first + 199]
   let height = min([15, len(shown), &lines - 6])
   let s:peek = {'file': a:file, 'lnum': a:lnum}
-  let id = popup_atcursor(shown, {'title': ' ' . fnamemodify(a:file, ':~:.') . ':' . a:lnum . '  Enter: go there  Esc: close ',
+  let id = popup_atcursor(shown, {'title': ' ' . fnamemodify(a:file, ':~:.') . ':' . a:lnum . '  Enter: go there (Ctrl+v beside, Ctrl+x below)  Esc: close ',
         \ 'border': [], 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'padding': [0, 1, 0, 1],
         \ 'maxheight': height, 'minheight': height, 'minwidth': min([80, &columns - 10]), 'maxwidth': &columns - 10,
         \ 'scrollbar': 1, 'moved': 'any', 'filter': function('s:PeekKey'), 'firstline': 1})
@@ -4779,14 +4967,14 @@ function! s:PeekKey(id, key) abort
   if has_key(steps, a:key)
     call popup_setoptions(a:id, {'firstline': max([1, min([n, top + steps[a:key]])])})
     return 1
-  elseif a:key ==# "\<CR>"
+  elseif a:key ==# "\<CR>" || a:key ==# "\<C-v>" || a:key ==# "\<C-x>"
     call popup_close(a:id)
     " (from a panel, the terminal's or a list's: in the editor, not over the panel)
     if &buftype !=# ''
       call s:EditWin()
     endif
     normal! m'
-    execute 'edit' fnameescape(s:peek.file)
+    execute (a:key ==# "\<C-v>" ? 'vsplit' : a:key ==# "\<C-x>" ? 'split' : 'edit') fnameescape(fnamemodify(s:peek.file, ':~:.'))
     call cursor(s:peek.lnum, 1)
     normal! zz
     return 1
@@ -4831,15 +5019,16 @@ function! s:SymbolsGot(query, result) abort
           \ get(i, 'containerName', ''), file, line))
   endfor
   call s:EditWin()
-  call fzf#run(fzf#wrap({'source': rows, 'sink': function('s:SymbolPicked'),
+  call fzf#run(fzf#wrap({'source': rows, 'sink*': function('s:SymbolPicked'),
         \ 'options': ['--prompt', 'Symbol> ', '--delimiter', "\t", '--tabstop', '4', '--query', a:query,
-        \   '--header', 'Enter open   (symbol, kind, in, where)']}))
+        \   '--expect', 'ctrl-v,ctrl-x', '--header', 'Enter open   Ctrl+v beside   Ctrl+x below   (symbol, kind, in, where)']}))
 endfunction
-function! s:SymbolPicked(row) abort
-  let m = matchlist(a:row, '\t\([^\t]*\):\(\d\+\)$')
+function! s:SymbolPicked(lines) abort
+  let [key, row] = [get(a:lines, 0, ''), get(a:lines, 1, '')]
+  let m = matchlist(row, '\t\([^\t]*\):\(\d\+\)$')
   if !empty(m)
     normal! m'
-    execute 'edit' fnameescape(expand(m[1]))
+    execute get({'ctrl-v': 'vsplit', 'ctrl-x': 'split'}, key, 'edit') fnameescape(expand(m[1]))
     call cursor(str2nr(m[2]), 1)
     normal! zz
   endif
@@ -4930,6 +5119,7 @@ function! s:GitPanel(what) abort
     execute 'silent! bwipeout' blank
   endif
   setlocal winfixheight nonumber nocursorline signcolumn=no nolist
+  nnoremap <buffer> <silent> q :close<CR>
   call setbufvar(buf, '&buflisted', 0)
   let s:git_panel = buf
   " (focus stays with the files, unless git has a question: a user name, password or passphrase,
@@ -5293,6 +5483,7 @@ function! s:MdPreview() abort
   execute 'rightbelow vertical' max([40, winwidth(0) / 2]) 'new'
   setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted wrap linebreak breakindent nonumber
   setlocal nocursorline signcolumn=no nolist nomodeline filetype=vimzipmdpreview
+  nnoremap <buffer> <silent> q :close<CR>
   execute 'silent file' fnameescape('Preview ' . fnamemodify(bufname(src), ':t'))
   let b:vimzip_md_source = src
   call setbufvar(src, 'vimzip_md_preview', bufnr(''))
@@ -5378,7 +5569,7 @@ function! s:MdImage(path) abort
       let cell = s:CellPixels()
       let cmd = [s:view, c.kind, file] + size + cell
     else
-      let cmd = [s:view, 'image', file] + size + (&termguicolors ? [] : ['256'])
+      let cmd = [s:view, s:Octants() ? 'cells' : 'image', file] + size + (&termguicolors ? [] : ['256'])
     endif
     let src = c.src
     call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(out, 'error: ' . l)},

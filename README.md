@@ -41,17 +41,23 @@ Opens the file tree and the files you had open last time. Files save themselves.
   edge, merge conflicts colored with a key for each choice (`Space mc` / `mi` / `mb`), switch branch
   (`Space go`, or click it in the status bar), push and pull (`Space gP` / `Space gF`)
 - **Panels**: terminal (`F4`), outline (`F3`), an AI agent on the right (`Space a`)
+- **Links**: `Ctrl+click` (or `gx`) on a link opens it in the browser, on a file name
+  (`src/main.c:12:5`, a Python traceback, a diff's `a/` `b/`) opens it at that line, in a file or
+  in the terminal; on a name in the code it goes to its definition
 - **Debug**: gdb with breakpoints (`F5`, `F9`, `F10`, `F11`)
 - **Images and PDFs**: open like any file. Pictures are drawn in real pixels in terminals that can
   (sixel: Windows Terminal, Konsole, WezTerm, foot, xterm, GNOME Terminal and Terminator when their
-  VTE has it; kitty and Ghostty), elsewhere and inside tmux with half blocks. PDF pages are shown
+  VTE has it; kitty and Ghostty); else GNOME Terminal and Terminator draw them with octants (2 x 4
+  parts a cell), other terminals and tmux with half blocks. PDF pages are shown
   the same way when `pdftoppm` (poppler) is installed (`n` / `p` turn the page, `t` shows the text),
   else their text. `o` opens the file in the system viewer. The Markdown preview draws the
-  pictures it links to. `let g:vimzip_images = 'blocks'` (or `'sixel'`, `'kitty'`) chooses the way,
+  pictures it links to. `let g:vimzip_images = 'blocks'` (or `'sixel'`, `'kitty'`, `'octants'`) chooses the way,
   `let g:vimzip_cell_pixels = [10, 20]` a cell's size when the terminal does not tell it
 
 Vim's own keys all work. The added ones are grouped under `Space` by topic (`f` find, `g` git,
-`c` code, `t` terminal, `d` debug). **`Space ?` shows every key and `:` command.**
+`c` code, `t` terminal, `d` debug). Every list takes the same keys: `Enter` opens, `Ctrl+v` beside,
+`Ctrl+x` below (searches, the tree, problems, a peeked definition), and `q` closes a list or
+panel. **`Space ?` shows every key and `:` command.**
 
 ![Space ?](docs/keys.png)
 
@@ -70,7 +76,7 @@ found; `let g:vimzip_lite = 0` (or `1`) decides for it.
 
 `Space fp` lists your projects: the ones you added (`Ctrl+a` adds the typed folder, or opens a
 folder tree to pick one with `a`; `Ctrl+e` edits the list, `~/.config/vimzip/projects`), then the
-recently opened ones; `Ctrl+x` takes one off.
+recently opened ones; `Ctrl+d` takes one off.
 
 `:Theme` lists the status bar themes and `:Theme nord` tries one. Code is colored like VSCode's
 Dark+ (functions, variables, types and constants apart); `colorscheme habamax` (or any other) in
