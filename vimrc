@@ -4543,6 +4543,8 @@ endfunction
 function! s:BranchPicked(lines) abort
   let [query, picked] = [trim(get(a:lines, 0, '')), get(a:lines, 1, '')]
   let git = 'git -C ' . shellescape(getcwd())
+  " (changes typed just now saved first: the files are read again from the new branch)
+  call s:QuietWrite('wall')
   if picked !=# ''
     let name = trim(split(picked[2 :], "\t")[0])
     " (a remote's branch: a local one following it, as VSCode does)
@@ -4577,6 +4579,14 @@ endfunction
 function! s:GitPanel(what) abort
   if !s:InGit()
     return
+  endif
+  " (one panel: the last one's, failed or still asking, closed first)
+  if bufexists(get(s:, 'git_panel', -1))
+    if term_getstatus(s:git_panel) =~# 'running'
+      call s:Say('git is still running in the panel below')
+      return
+    endif
+    execute 'silent! bwipeout!' s:git_panel
   endif
   let git = 'git -C ' . shellescape(getcwd())
   if a:what ==# 'push'
@@ -4661,10 +4671,23 @@ function! s:MdInline(text) abort
       let t = t[len(m[0]) :]
       continue
     endif
-    let m = matchlist(t, '^!\=\[\([^\]]*\)\](\([^)]*\))')
+    " (\* is a *: a mark taken as text)
+    let m = matchlist(t, '^\\\([[:punct:]]\)')
     if !empty(m)
-      let label = t[0] ==# '!' ? '▣ ' . (m[1] !=# '' ? m[1] : fnamemodify(m[2], ':t')) : m[1]
+      let out .= m[1]
+      let t = t[2 :]
+      continue
+    endif
+    " (a link's text may be a picture: a README's badges, [![CI](badge.svg)](actions))
+    let m = matchlist(t, '^!\=\[\(\%(!\[[^\]]*\]([^)]*)\|[^\]]\)*\)\](\([^)]*\))')
+    if !empty(m)
+      if t[0] ==# '!'
+        let [label, lp] = ['▣ ' . (m[1] !=# '' ? m[1] : fnamemodify(m[2], ':t')), []]
+      else
+        let [label, lp] = s:MdInline(m[1])
+      endif
       call add(props, [len(out) + 1, len(label), 'vimzip_md_link'])
+      call extend(props, map(lp, '[v:val[0] + len(out), v:val[1], v:val[2]]'))
       let out .= label
       let t = t[len(m[0]) :]
       continue
@@ -4700,7 +4723,7 @@ function! s:MdInline(text) abort
       continue
     endif
     " (plain text up to the next possible mark)
-    let n = match(t, '[`!\[*_<]', 1)
+    let n = match(t, '[`!\[*_<\\]', 1)
     let n = n < 0 ? len(t) : n
     let out .= t[: n - 1]
     let t = t[n :]
@@ -4770,7 +4793,8 @@ function! s:MdRender(src, ...) abort
       let i = j
       continue
     endif
-    let m = matchlist(t, '^\s\{,3}\(#\{1,6}\)\s\+\(.\{-}\)\s*#*\s*$')
+    " (closing #s only after a blank: # C# keeps its #)
+    let m = matchlist(t, '^\s\{,3}\(#\{1,6}\)\%(\s\+\(.\{-}\)\)\=\%(\s\+#\+\)\=\s*$')
     if !empty(m)
       let [text, tp] = s:MdInline(m[2])
       call add(lines, text)
