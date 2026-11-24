@@ -35,7 +35,8 @@ let s:vimzip = [
       \   ['Tab  Shift+Tab', 'next / previous tab'],
       \   ['click a tab', 'go to it'],
       \   ['Space q', 'close the tab'],
-      \   ['Ctrl+s', 'save (autosave is on too)']]],
+      \   ['Ctrl+s', 'save (autosave is on too)'],
+      \   ['', 'a new file: asks where']]],
       \ ['Panels', [
       \   ['Space e  F2', 'file tree (open, focus, close)'],
       \   ['Ctrl+Shift+e', 'file tree (VSCode key)'],
