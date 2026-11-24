@@ -3582,8 +3582,10 @@ function! s:BuildDone(status) abort
   endif
   let lines = getbufline(s:build, 1, '$')
   let efm = &errorformat
-  " (the kind of each message apart from its text, notes left out, and TypeScript's file(line,col))
+  " (the kind of each message apart from its text, notes left out, Rust's error[E0425], and
+  " TypeScript's file(line,col))
   let &errorformat = '%f:%l:%c: %trror: %m,%f:%l:%c: fatal %trror: %m,%f:%l:%c: %tarning: %m,'
+        \ . '%f:%l:%c: %trror[%*[^]]]: %m,%f:%l:%c: %tarning[%*[^]]]: %m,'
         \ . '%-G%f:%l:%c: note: %m,%f(%l\,%c): %t%*[^ ] TS%n: %m,' . &errorformat
   let qf = getqflist({'lines': lines, 'efm': &errorformat}).items
   let &errorformat = efm
@@ -4022,7 +4024,8 @@ let s:pairs = {'(': ')', '[': ']', '{': '}', '"': '"', "'": "'", '`': '`'}
 let s:no_pair = {"'": '^\(rust\|lisp\|scheme\|clojure\|racket\|text\|markdown\|gitcommit\|tex\|ocaml\)$',
       \ '"': '^vim$', '`': '^\(c\|cpp\|python\|java\|rust\|lua\|vim\|text\|gitcommit\)$'}
 function! s:PairsOn() abort
-  return get(g:, 'vimzip_autopairs', 1) && &buftype ==# '' && !&paste
+  " (not in Replace mode, R: each letter there takes the place of one, Backspace gives it back)
+  return get(g:, 'vimzip_autopairs', 1) && &buftype ==# '' && !&paste && mode() ==# 'i'
 endfunction
 function! s:PairOpen(ch) abort
   let line = getline('.')
