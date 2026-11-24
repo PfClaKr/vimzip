@@ -3623,6 +3623,9 @@ function! s:Build() abort
   call win_gotoid(from)
   call s:Layout()
 endfunction
+function! s:Count(n, what) abort
+  return a:n . ' ' . a:what . (a:n == 1 ? '' : 's')
+endfunction
 function! s:BuildDone(status) abort
   if !bufexists(get(s:, 'build', -1))
     return
@@ -3640,9 +3643,9 @@ function! s:BuildDone(status) abort
   let errors = len(filter(copy(s:build_problems), 'v:val.type ==# "E"'))
   call s:ProblemsUpdate()
   if a:status == 0
-    call s:Say('Build succeeded' . (empty(s:build_problems) ? '' : printf(' (%d warnings: Space cp)', len(s:build_problems))))
+    call s:Say('Build succeeded' . (empty(s:build_problems) ? '' : printf(' (%s: Space cp)', s:Count(len(s:build_problems), 'warning'))))
   else
-    call s:Say('Build failed' . (empty(s:build_problems) ? '' : printf(': %d errors, %d warnings (Space cp lists them)', errors, len(s:build_problems) - errors)), 'WarningMsg')
+    call s:Say('Build failed' . (empty(s:build_problems) ? '' : printf(': %s, %s (Space cp lists them)', s:Count(errors, 'error'), s:Count(len(s:build_problems) - errors, 'warning'))), 'WarningMsg')
   endif
 endfunction
 
@@ -3913,7 +3916,7 @@ function! s:MultiApply() abort
     let new = strpart(t, 0, at) . typed . strpart(t, e.op ==# 'c' ? at + e.len : at)
     undojoin | call setline(l, new)
   endfor
-  call s:Say('Changed ' . len(e.pos) . ' places')
+  call s:Say('Changed ' . s:Count(len(e.pos), 'place'))
 endfunction
 
 " find and replace in the project (VSCode's Ctrl+Shift+h): the text (the selection or the word under
@@ -3955,8 +3958,8 @@ function! s:Replace(text) abort
   setlocal filetype=vimzipreplace
   silent file [Replace]
   let files = len(uniq(sort(map(copy(matches), 'v:val[0]'))))
-  let head = printf('Replace "%s" with "%s": %d lines in %d files.  Enter: replace  dd: leave one out  q: cancel',
-        \ find, with, len(matches), files)
+  let head = printf('Replace "%s" with "%s": %s in %s.  Enter: replace  dd: leave one out  q: cancel',
+        \ find, with, s:Count(len(matches), 'line'), s:Count(files, 'file'))
   let b:vimzip_replace = {'find': find, 'with': with, 'head': head}
   call setline(1, head)
   let n = 1
@@ -4041,7 +4044,7 @@ function! s:ReplaceApply() abort
     endif
     let files += done > before
   endfor
-  call s:Say(printf('Replaced %d in %d file%s', done, files, files == 1 ? '' : 's'))
+  call s:Say(printf('Replaced %d in %s', done, s:Count(files, 'file')))
 endfunction
 
 nnoremap <silent> <leader>cr :call <SID>Rename()<CR>
