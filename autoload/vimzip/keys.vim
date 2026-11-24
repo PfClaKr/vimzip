@@ -644,6 +644,8 @@ function! vimzip#keys#menu(...) abort
   let order = sort(keys(keys), {a, b -> (keys[a] =~# '…$') != (keys[b] =~# '…$') ? (keys[a] =~# '…$' ? -1 : 1) : a ==? b ? (a <# b ? -1 : 1) : (a <? b ? -1 : 1)})
   let cells = map(copy(order), {_, k -> [k, keys[k]]})
   let width = min([max(map(copy(cells), 'strdisplaywidth(v:val[1])')) + 6, 34])
+  " (narrower columns on a small screen rather than a list taller than it)
+  let width = max([18, min([width, (&columns - 4) / max([1, min([3, len(cells) * 2 / max([1, &lines - 6])])])])])
   let ncols = max([1, (&columns - 4) / width])
   let nrows = (len(cells) + ncols - 1) / ncols
   let [lines, props] = [[], []]
@@ -664,7 +666,8 @@ function! vimzip#keys#menu(...) abort
   let title = ' Space ' . s:menu_prefix . (s:menu_prefix ==# '' ? '' : ' (' . get(s:groups, s:menu_prefix, '') . ')')
         \ . '   type a key   ' . (s:menu_prefix ==# '' ? '? all keys' : 'Backspace back') . '   Esc close '
   silent! call popup_close(get(s:, 'menu_id', -1))
-  let s:menu_id = popup_create(lines, {'line': &lines - &cmdheight - 1 - len(lines) - 1, 'col': 1,
+  let s:menu_id = popup_create(lines, {'line': max([1, &lines - &cmdheight - 1 - len(lines) - 1]), 'col': 1,
+        \ 'maxheight': &lines - &cmdheight - 3, 'scrollbar': 1,
         \ 'minwidth': &columns - 2, 'maxwidth': &columns - 2, 'border': [1, 0, 0, 0], 'borderchars': ['─'],
         \ 'title': title, 'padding': [0, 1, 0, 1], 'zindex': 300, 'highlight': 'Normal',
         \ 'filter': function('s:MenuKey'), 'mapping': 0})
