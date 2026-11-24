@@ -2928,9 +2928,16 @@ function! s:ViewOpen(buf, kind) abort
   let &l:filetype = 'vimzip' . a:kind
   silent! call gitgutter#buffer_disable(a:buf)
   nnoremap <buffer> <silent> o :call <SID>ViewExternal()<CR>
+  nnoremap <buffer> <silent> <C-l> :call <SID>PixAgain()<CR>
   call s:ViewFill(a:buf, ['', '  Loading ' . expand('%:t') . ' ...'])
   if a:kind ==# 'pdf'
-    call s:PdfRead(a:buf)
+    nnoremap <buffer> <silent> t :call <SID>PdfToggle()<CR>
+    " (in the text: the keys as usual, n the next match)
+    for [s:k, s:n] in [['n', 1], ['<PageDown>', 1], ['p', -1], ['<PageUp>', -1]]
+      execute 'nnoremap <buffer> <silent> <expr>' s:k 'get(b:, "vimzip_page", 0) ? ":<C-u>call <SID>PdfPage(' . s:n
+            \ . ' * v:count1)<CR>" : "' . substitute(s:k, '<', '\\<', '') . '"'
+    endfor
+    call s:PdfOpen(a:buf)
   else
     unlet! b:vimzip_size
     call s:ImgRender(a:buf)
@@ -2947,7 +2954,7 @@ function! s:ViewGit(buf, kind) abort
   call win_execute(bufwinid(a:buf), 'setlocal ' . s:view_opts)
   call s:ViewFill(a:buf, ['', '  Loading ...'])
   if a:kind ==# 'pdf'
-    call s:PdfRead(a:buf)
+    call s:PdfOpen(a:buf)
   else
     call s:ImgRender(a:buf)
   endif
@@ -2969,31 +2976,85 @@ function! s:ViewHeader(buf, info) abort
   return printf('  %s   %s   %s   o: open in viewer', name, a:info,
         \ kb >= 1024 ? printf('%.1f MB', kb / 1024.0) : max([kb, 1]) . ' KB')
 endfunction
+" pictures in real pixels where the terminal can draw them (g:vimzip_images: 'auto', or 'sixel',
+" 'kitty', 'blocks'): kitty and Ghostty by kitty's own way, the terminals that tell vim they draw
+" sixel (Windows Terminal, Konsole, WezTerm, foot, xterm, VTE built with it) by sixel; not inside
+" tmux. Elsewhere half blocks, two pixels a cell.
+function! s:Pixels(buf) abort
+  let want = get(g:, 'vimzip_images', 'auto')
+  if want !=# 'auto' || getbufvar(a:buf, 'vimzip_pix_failed', 0)
+    return want =~# '^\(sixel\|kitty\)$' && !getbufvar(a:buf, 'vimzip_pix_failed', 0) ? want : ''
+  endif
+  if has('gui_running') || $TMUX !=# '' || $TERM =~# '^screen'
+    return ''
+  endif
+  if &termguicolors && ($KITTY_WINDOW_ID !=# '' || $TERM =~# 'kitty\|ghostty' || $TERM_PROGRAM ==# 'ghostty')
+    return 'kitty'
+  endif
+  " (the answer to vim's question at start, DA1: 4 among its numbers is sixel)
+  return v:termda1 =~# '[?;]4[;c]' ? 'sixel' : ''
+endfunction
+" a cell's size in screen pixels: the terminal's, or g:vimzip_cell_pixels
+function! s:CellPixels() abort
+  let c = get(g:, 'vimzip_cell_pixels', [])
+  if type(c) == v:t_list && len(c) == 2
+    return c
+  endif
+  let c = exists('*getcellpixels') ? getcellpixels() : []
+  " (unknown, as through WSL: Windows Terminal draws sixel as if its cells were 10 x 20)
+  return len(c) == 2 && c[0] > 0 && c[1] > 0 ? c : [10, 20]
+endfunction
 " the window's size in cells for the picture, under the header line and a blank one
 function! s:ImgRender(buf) abort
   let w = bufwinid(a:buf)
-  if w < 0 || getbufvar(a:buf, 'vimzip_view') !=# 'image'
+  let page = getbufvar(a:buf, 'vimzip_page', 0)
+  if w < 0 || getbufvar(a:buf, 'vimzip_view') !=# 'image' && !page
     return
   endif
   let size = [max([4, winwidth(w) - 2]), max([2, winheight(w) - 3])]
-  if getbufvar(a:buf, 'vimzip_size', []) == size
+  let kind = s:Pixels(a:buf)
+  let key = size + [kind] + (page ? [page] : [])
+  if page && kind ==# ''
+    " (the terminal no longer draws pixels: the PDF's text)
+    call setbufvar(a:buf, 'vimzip_page', 0)
+    call s:PdfRead(a:buf)
     return
   endif
-  call setbufvar(a:buf, 'vimzip_size', size)
+  if getbufvar(a:buf, 'vimzip_size', []) == key
+    return
+  endif
+  call setbufvar(a:buf, 'vimzip_size', key)
   if !executable(s:view)
     call s:ViewFill(a:buf, ['', '  vimzip-view is missing from ' . fnamemodify(s:view, ':h') . ': o opens the picture elsewhere'])
     return
   endif
   let out = []
-  let cmd = [s:view, 'image', s:ViewFile(a:buf), size[0], size[1]] + (&termguicolors ? [] : ['256'])
+  if page
+    " a PDF's page: drawn by pdftoppm at the size it is shown, fitted by vimzip-view
+    let cell = s:CellPixels()
+    let [pw, ph] = getbufvar(a:buf, 'vimzip_pdf_size', [612, 792])
+    let [mw, mh] = [size[0] * cell[0], size[1] * cell[1]]
+    let fit = mw * ph > mh * pw ? '-scale-to-x -1 -scale-to-y ' . mh : '-scale-to-x ' . mw . ' -scale-to-y -1'
+    let cmd = ['sh', '-c', printf('pdftoppm -f %d -l %d -png %s -singlefile %s | %s %s - %d %d %d %d', page, page, fit,
+          \ shellescape(s:ViewFile(a:buf)), shellescape(s:view), kind, size[0], size[1], cell[0], cell[1])]
+    let Done = {-> s:PixShow(a:buf, out, key)}
+  elseif kind !=# ''
+    let cell = s:CellPixels()
+    let cmd = [s:view, kind, s:ViewFile(a:buf), size[0], size[1], cell[0], cell[1]]
+    let Done = {-> s:PixShow(a:buf, out, key)}
+  else
+    let cmd = [s:view, 'image', s:ViewFile(a:buf), size[0], size[1]] + (&termguicolors ? [] : ['256'])
+    let Done = {-> s:ImgShow(a:buf, out, size)}
+  endif
   call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(out, 'error: ' . l)},
-        \ 'close_cb': {_ -> s:ImgShow(a:buf, out, size)}})
+        \ 'close_cb': {_ -> Done()}})
 endfunction
 function! s:ImgShow(buf, out, size) abort
   " (gone, or resized again while drawing: that drawing is not shown)
-  if !bufexists(a:buf) || getbufvar(a:buf, 'vimzip_size', []) != a:size
+  if !bufexists(a:buf) || getbufvar(a:buf, 'vimzip_size', [])[: 1] != a:size
     return
   endif
+  call s:PixForget(a:buf)
   if empty(a:out) || a:out[0] =~# '^error: '
     let msg = empty(a:out) ? 'no output' : substitute(a:out[0], '^error: \(vimzip-view: \)\=', '', '')
     call s:ViewFill(a:buf, [s:ViewHeader(a:buf, 'cannot be shown'), '', '  ' . msg])
@@ -3012,11 +3073,7 @@ function! s:ImgShow(buf, out, size) abort
       " property gives the upper half's color, another the lower's, and vim combines the two
       for [name, hl] in [['VimzipImgF_' . top, (gui ? 'guifg=#' : 'ctermfg=') . top],
             \            ['VimzipImgB_' . bottom, (gui ? 'guibg=#' : 'ctermbg=') . bottom]]
-        if !has_key(s:img_hl, name)
-          let s:img_hl[name] = hl
-          execute 'highlight' name hl
-          call prop_type_add(name, {'highlight': name})
-        endif
+        call s:ImgGroup(name, hl)
         call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * 3, name])
       endfor
       let text .= repeat('▀', str2nr(n))
@@ -3027,6 +3084,174 @@ function! s:ImgShow(buf, out, size) abort
   for [lnum, col, length, name] in props
     call prop_add(lnum, col, {'length': length, 'type': name, 'bufnr': a:buf})
   endfor
+endfunction
+function! s:ImgGroup(name, hl) abort
+  if !has_key(s:img_hl, a:name)
+    let s:img_hl[a:name] = a:hl
+    execute 'highlight' a:name a:hl
+    call prop_type_add(a:name, {'highlight': a:name})
+  endif
+endfunction
+" the picture from vimzip-view in pixels: its first line says the cells it takes
+function! s:PixShow(buf, out, key) abort
+  if !bufexists(a:buf) || getbufvar(a:buf, 'vimzip_size', []) != a:key
+    return
+  endif
+  if len(a:out) < 2 || a:out[0] =~# '^error: ' || a:out[1] =~# '^error: '
+    if len(a:key) > 3
+      " (a page pdftoppm could not draw: the text)
+      call setbufvar(a:buf, 'vimzip_page', 0)
+      call s:PdfRead(a:buf)
+      return
+    endif
+    " (a picture the terminal's way could not make: half blocks, which say why if they fail too)
+    call setbufvar(a:buf, 'vimzip_pix_failed', 1)
+    call setbufvar(a:buf, 'vimzip_size', [])
+    call s:ImgRender(a:buf)
+    return
+  endif
+  call s:PixForget(a:buf)
+  let [dims, format, cols, rows] = split(a:out[0])
+  let [cols, rows] = [str2nr(cols), str2nr(rows)]
+  let pad = max([0, (a:key[0] - cols) / 2]) + 1
+  let pages = getbufvar(a:buf, 'vimzip_pages', 0)
+  let header = len(a:key) > 3 ? s:ViewHeader(a:buf, printf('page %d%s   n p: pages   t: text', a:key[3], pages ? ' of ' . pages : ''))
+        \ : s:ViewHeader(a:buf, format . ' ' . substitute(dims, 'x', ' x ', ''))
+  if a:key[2] ==# 'kitty'
+    " sent once, then shown by the placeholders in the text, which vim scrolls and redraws as any
+    " text (the image's number is their color)
+    let id = 0xA000 + a:buf
+    call s:KittySend(id, a:out[1], cols, rows)
+    let name = 'VimzipKitty' . id
+    call s:ImgGroup(name, printf('guifg=#%06x', id))
+    let rows_text = a:out[2 :]
+    call s:ViewFill(a:buf, [header, ''] + map(copy(rows_text), 'repeat(" ", pad) . v:val'))
+    for i in range(len(rows_text))
+      call prop_add(i + 3, pad + 1, {'length': len(rows_text[i]), 'type': name, 'bufnr': a:buf})
+    endfor
+    call setbufvar(a:buf, 'vimzip_pix', {'kind': 'kitty', 'id': id})
+  else
+    call s:ViewFill(a:buf, [header, ''] + repeat([''], rows))
+    call setbufvar(a:buf, 'vimzip_pix', {'kind': 'sixel', 'data': a:out[1], 'col': pad, 'rows': rows})
+    call s:PixDraw(1)
+  endif
+endfunction
+function! s:KittySend(id, data, cols, rows) abort
+  let [i, n] = [0, len(a:data)]
+  while i < n
+    let more = i + 4096 < n
+    " (q=2: no answers, which vim would take for typed keys)
+    let ctl = i == 0 ? printf('a=T,U=1,f=100,i=%d,c=%d,r=%d,q=2,m=%d', a:id, a:cols, a:rows, more) : 'm=' . more
+    call echoraw("\e_G" . ctl . ';' . a:data[i : i + 4095] . "\e\\")
+    let i += 4096
+  endwhile
+endfunction
+" a picture shown before (another size, or the buffer goes): the terminal's copy let go
+function! s:PixForget(buf) abort
+  let p = getbufvar(a:buf, 'vimzip_pix', {})
+  if get(p, 'kind', '') ==# 'kitty'
+    call echoraw(printf("\e_Ga=d,d=I,i=%d,q=2\e\\", p.id))
+  endif
+  call setbufvar(a:buf, 'vimzip_pix', {})
+endfunction
+" sixel pictures are drawn over vim's screen, which does not know they are there: drawn again
+" whenever the windows, their scrolling or a popup over them change (vim redraws everything first:
+" what it drew over them as blank left pieces behind), and not while a popup covers them
+let s:pix_sig = ''
+let s:pix_shown = 0
+function! s:PixDraw(force) abort
+  let wins = gettabinfo(tabpagenr())[0].windows
+  let todo = filter(map(copy(wins), '[v:val, getbufvar(winbufnr(v:val), "vimzip_pix", {})]'), 'get(v:val[1], "kind", "") ==# "sixel"')
+  if empty(todo) && !s:pix_shown
+    return
+  endif
+  let rects = map(copy(todo), 's:PixRect(v:val[0], v:val[1])')
+  let covered = map(copy(rects), 's:PixCovered(v:val)')
+  let sig = string([tabpagenr(), &lines, &columns, rects, covered,
+        \ map(copy(wins), '[v:val, winbufnr(v:val), win_screenpos(v:val), winwidth(v:val), winheight(v:val)]')])
+  if !a:force && sig ==# s:pix_sig
+    return
+  endif
+  let s:pix_sig = sig
+  " (the screen brought up to date first: lines vim still had to draw cleared the picture)
+  if s:pix_shown
+    redraw!
+  else
+    redraw
+  endif
+  let s:pix_shown = 0
+  for i in range(len(todo))
+    if !empty(rects[i]) && !covered[i]
+      call echoraw("\e7\e[" . rects[i][0] . ';' . rects[i][1] . 'H' . todo[i][1].data . "\e8")
+      let s:pix_shown = 1
+    endif
+  endfor
+endfunction
+function! s:PixAgain() abort
+  redraw!
+  let s:pix_shown = 0
+  call s:PixDraw(1)
+endfunction
+" [row, col, rows, cols] on the screen, or [] when scrolled out of the window
+function! s:PixRect(w, p) abort
+  let top = line('w0', a:w)
+  let [row, col] = win_screenpos(a:w)
+  let first = row + 3 - top
+  if top > 3 || first + a:p.rows - 1 > row + winheight(a:w) - 1
+    return []
+  endif
+  return [first, col + a:p.col, a:p.rows, winwidth(a:w) - a:p.col]
+endfunction
+function! s:PixCovered(r) abort
+  if empty(a:r)
+    return 0
+  endif
+  for id in popup_list()
+    let p = popup_getpos(id)
+    if get(p, 'visible', 0) && p.line <= a:r[0] + a:r[2] - 1 && p.line + p.height - 1 >= a:r[0]
+          \ && p.col <= a:r[1] + a:r[3] - 1 && p.col + p.width - 1 >= a:r[1]
+      return 1
+    endif
+  endfor
+  return 0
+endfunction
+" a PDF: its pages as pictures where the terminal draws pixels and pdftoppm (poppler) is there, t
+" for its text (to search and copy); else the text
+function! s:PdfOpen(buf) abort
+  if getbufvar(a:buf, 'vimzip_pdf_text', 0) || s:Pixels(a:buf) ==# '' || !executable('pdftoppm')
+    call setbufvar(a:buf, 'vimzip_page', 0)
+    call s:PdfRead(a:buf)
+    return
+  endif
+  let info = executable('pdfinfo') ? systemlist('pdfinfo ' . shellescape(s:ViewFile(a:buf))) : []
+  let n = str2nr(matchstr(join(info, "\n"), 'Pages:\s*\zs\d\+'))
+  let size = matchlist(join(info, "\n"), 'Page size:\s*\([0-9.]\+\) x \([0-9.]\+\)')
+  call setbufvar(a:buf, 'vimzip_pages', n)
+  call setbufvar(a:buf, 'vimzip_pdf_size', empty(size) ? [612, 792] : [str2float(size[1]), str2float(size[2])])
+  call setbufvar(a:buf, 'vimzip_page', max([1, getbufvar(a:buf, 'vimzip_page', 1)]))
+  call setbufvar(a:buf, 'vimzip_size', [])
+  call s:ImgRender(a:buf)
+endfunction
+function! s:PdfPage(step) abort
+  let page = get(b:, 'vimzip_page', 0)
+  if !page
+    return
+  endif
+  let last = get(b:, 'vimzip_pages', 0)
+  let to = max([1, last ? min([last, page + a:step]) : page + a:step])
+  if to != page
+    let b:vimzip_page = to
+    call s:ImgRender(bufnr(''))
+  endif
+endfunction
+function! s:PdfToggle() abort
+  let b:vimzip_pdf_text = get(b:, 'vimzip_page', 0) > 0
+  " (back to the page it was on)
+  let b:vimzip_page = b:vimzip_pdf_text ? b:vimzip_page : get(b:, 'vimzip_pdf_last', 1)
+  let b:vimzip_pdf_last = b:vimzip_page
+  call s:PixForget(bufnr(''))
+  let b:vimzip_size = []
+  call s:PdfOpen(bufnr(''))
 endfunction
 function! s:PdfRead(buf) abort
   let file = s:ViewFile(a:buf)
@@ -3051,7 +3276,8 @@ function! s:PdfShow(buf, out, err, tool) abort
   if len(pages) > 1 && empty(filter(copy(pages[-1]), 'v:val !~# "^\\s*$"'))
     call remove(pages, -1)  " pdftotext ends the last page with one too
   endif
-  let lines = [s:ViewHeader(a:buf, len(pages) . (len(pages) == 1 ? ' page' : ' pages') . ', text by ' . a:tool)]
+  let lines = [s:ViewHeader(a:buf, len(pages) . (len(pages) == 1 ? ' page' : ' pages') . ', text by ' . a:tool
+        \ . (s:Pixels(a:buf) !=# '' && executable('pdftoppm') ? '   t: pages' : ''))]
   if empty(filter(copy(a:out), 'v:val =~# "\\S"'))
     call extend(lines, ['', '  ' . (empty(a:err) ? 'No text in this PDF (scanned pages are pictures).' : a:err[0])])
   else
@@ -3095,6 +3321,13 @@ augroup vimzip_view
   autocmd BufWinEnter * call s:ViewWindow()
   autocmd WinResized,VimResized * for s:w in gettabinfo(tabpagenr())[0].windows | call s:ImgRender(winbufnr(s:w)) | endfor
   autocmd ColorScheme * for [s:n, s:d] in items(s:img_hl) | execute 'highlight' s:n s:d | endfor
+  autocmd SafeState,SafeStateAgain * call s:PixDraw(0)
+  " (a long message or a prompt scrolled the screen, vim came back from the background: again)
+  autocmd CmdlineLeave,VimResume,FocusGained * let s:pix_sig = ''
+  autocmd BufWipeout,BufUnload * call s:PixForget(str2nr(expand('<abuf>')))
+  " (the terminal's answer came after a picture was opened: in pixels now)
+  autocmd TermResponseAll da1 for s:b in getbufinfo({'bufloaded': 1}) | if getbufvar(s:b.bufnr, 'vimzip_view') ==# 'image'
+        \ | call setbufvar(s:b.bufnr, 'vimzip_size', []) | call s:ImgRender(s:b.bufnr) | endif | endfor
 augroup END
 
 " ─── keys ────────────────────────────────────────────────────────────────────────────────────────
