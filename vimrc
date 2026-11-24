@@ -3236,10 +3236,11 @@ function! s:Rename() abort
 endfunction
 
 " Space cf: format the file (VSCode's Format Document) with the formatter of its language when one
-" is installed, else vim's reindent. Saving (Ctrl+s, :w; not the autosave while typing) formats too
-" where the project asks for it with the formatter's settings file (.clang-format, .prettierrc,
-" rustfmt.toml, [tool.ruff.format] or [tool.black] in pyproject.toml...), and Go and Zig files
-" always (gofmt / zig fmt being their own style). g:vimzip_format_on_save = 0 never, 1 whenever installed.
+" is installed, else vim's reindent (where vim knows the language's indent). Saving (Ctrl+s, :w;
+" not the autosave while typing) formats too where the project asks for it with the formatter's
+" settings file (.clang-format, .prettierrc, rustfmt.toml, [tool.ruff.format] or [tool.black] in
+" pyproject.toml...), and Go and Zig files always (gofmt / zig fmt being their own style).
+" g:vimzip_format_on_save = 0 never, 1 whenever installed.
 let s:formatters = {'c': ['clang-format'], 'cpp': ['clang-format'], 'objc': ['clang-format'],
       \ 'cuda': ['clang-format'], 'java': ['google-java-format'], 'python': ['ruff', 'black'],
       \ 'go': ['gofmt'], 'rust': ['rustfmt'], 'sh': ['shfmt'], 'bash': ['shfmt'], 'lua': ['stylua'],
@@ -3914,10 +3915,11 @@ function! s:Replace(text) abort
   setlocal buftype=nofile bufhidden=wipe noswapfile nobuflisted nowrap nonumber nocursorline signcolumn=no nolist
   setlocal filetype=vimzipreplace
   silent file [Replace]
-  let b:vimzip_replace = {'find': find, 'with': with}
   let files = len(uniq(sort(map(copy(matches), 'v:val[0]'))))
-  call setline(1, printf('Replace "%s" with "%s": %d lines in %d files.  Enter: replace  dd: leave one out  q: cancel',
-        \ find, with, len(matches), files))
+  let head = printf('Replace "%s" with "%s": %d lines in %d files.  Enter: replace  dd: leave one out  q: cancel',
+        \ find, with, len(matches), files)
+  let b:vimzip_replace = {'find': find, 'with': with, 'head': head}
+  call setline(1, head)
   let n = 1
   for [f, l, t] in matches
     let n += 1
@@ -3956,7 +3958,8 @@ endfunction
 function! s:ReplaceApply() abort
   let [find, with] = [b:vimzip_replace.find, b:vimzip_replace.with]
   let todo = {}
-  for l in getline(2, '$')
+  " (every line but the header: dd on the header too made the first change the one left out)
+  for l in filter(getline(1, '$'), 'v:val !=# b:vimzip_replace.head')
     let m = matchlist(l, '^\(.\{-}\):\(\d\+\): ')
     if !empty(m)
       let todo[m[1]] = add(get(todo, m[1], []), str2nr(m[2]))
