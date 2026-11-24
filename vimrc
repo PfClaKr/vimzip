@@ -521,6 +521,15 @@ function! s:CMakeUse(buf, dir) abort
   endif
   call setbufvar(a:buf, 'ale_c_build_dir_names', [a:dir])
 endfunction
+" CMake 4 stopped configuring projects that ask for a CMake older than 3.5
+" (cmake_minimum_required(VERSION 2.8), common in older projects and their bundled libraries):
+" "Compatibility with CMake < 3.5 has been removed from CMake". VSCode's CMake Tools gave the same
+" error. vimzip's CMake runs and builds set CMAKE_POLICY_VERSION_MINIMUM=3.5, which CMake 4 reads
+" to configure them anyway, with 3.5's behaviour (earlier CMake ignores it). One set in the shell
+" is kept.
+function! s:CMakeEnv() abort
+  return $CMAKE_POLICY_VERSION_MINIMUM ==# '' ? {'CMAKE_POLICY_VERSION_MINIMUM': '3.5'} : {}
+endfunction
 function! s:CMakeConfigure(root, dir) abort
   if job_status(get(get(s:cmake, a:root, {}), 'job', test_null_job())) ==# 'run'
     return
@@ -530,7 +539,7 @@ function! s:CMakeConfigure(root, dir) abort
   let cmd = (s:lite ? ['nice', '-n', '10'] : []) + ['cmake', '-S', a:root, '-B', a:dir,
         \ '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON', '-Wno-dev']
   let s:cmake[a:root] = {'job': job_start(cmd, {'in_io': 'null', 'out_io': 'file', 'out_name': log,
-        \ 'err_io': 'out', 'exit_cb': {_, status -> s:CMakeDone(a:root, a:dir, status)}})}
+        \ 'err_io': 'out', 'env': s:CMakeEnv(), 'exit_cb': {_, status -> s:CMakeDone(a:root, a:dir, status)}})}
 endfunction
 function! s:CMakeDone(root, dir, status) abort
   let made = a:status == 0 && filereadable(a:dir . '/compile_commands.json')
@@ -3575,8 +3584,9 @@ function! s:Build() abort
     execute 'silent! bwipeout!' old
   endif
   let blank = bufnr('')
+  " (the CMake setting for every build: a Makefile or script that runs CMake gets it too)
   let s:build = term_start([&shell, &shellcmdflag, cmd], {'curwin': 1, 'term_name': 'Build: ' . cmd,
-        \ 'term_kill': 'hup', 'exit_cb': {_, status -> timer_start(100, {-> s:BuildDone(status)})}})
+        \ 'env': s:CMakeEnv(), 'term_kill': 'hup', 'exit_cb': {_, status -> timer_start(100, {-> s:BuildDone(status)})}})
   if bufexists(blank) && blank != s:build
     execute 'silent! bwipeout' blank
   endif
