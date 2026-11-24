@@ -4222,8 +4222,9 @@ function! s:StickyHeads(w) abort
   if getbufvar(b, '&filetype') =~# '^\(text\|markdown\|gitcommit\|help\|\)$'
     return []
   elseif getbufvar(b, '&filetype') ==# 'python'
-    " (by indent: the def / class lines above with less of it)
-    let ind = indent(top)
+    " (by indent: the def / class lines above with less of it; a blank line at the top has none,
+    " the sticky lines went away on each one in a function, so the next line's)
+    let ind = indent(nextnonblank(top) ? nextnonblank(top) : top)
     let l = top - 1
     while l > 0 && len(heads) < 3
       let t = getbufline(b, l)[0]
