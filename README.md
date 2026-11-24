@@ -41,6 +41,9 @@ Opens the file tree and the files you had open last time. Files save themselves.
   edge, merge conflicts colored with a key for each choice (`Space mc` / `mi` / `mb`), switch branch
   (`Space go`, or click it in the status bar), push and pull (`Space gP` / `Space gF`)
 - **Panels**: terminal (`F4`), outline (`F3`), an AI agent on the right (`Space a`)
+- **Links**: `Ctrl+click` (or `gx`) on a link opens it in the browser, on a file name
+  (`src/main.c:12:5`, a Python traceback, a diff's `a/` `b/`) opens it at that line, in a file or
+  in the terminal; on a name in the code it goes to its definition
 - **Debug**: gdb with breakpoints (`F5`, `F9`, `F10`, `F11`)
 - **Images and PDFs**: open like any file. Pictures are drawn in real pixels in terminals that can
   (sixel: Windows Terminal, Konsole, WezTerm, foot, xterm, GNOME Terminal and Terminator when their

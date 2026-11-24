@@ -70,6 +70,8 @@ let s:vimzip = [
       \   ['Ctrl+w N  y  i', 'copy: select, y, back to typing']]],
       \ ['Code', [
       \   ['F12', 'go to definition (as gd)'],
+      \   ['Ctrl+click  gx', 'open link or file:line'],
+      \   ['', 'on a name: its definition'],
       \   ['Space ce', 'error on this line in full'],
       \   ['Space cr', 'rename everywhere (VSCode F2)'],
       \   ['Space cf', 'format the file'],

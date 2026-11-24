@@ -3371,20 +3371,28 @@ function! s:PdfShow(buf, out, err, tool) abort
   call s:ViewFill(a:buf, lines)
 endfunction
 function! s:ViewExternal() abort
-  let f = s:ViewFile(bufnr(''))
+  if s:OpenExternal(s:ViewFile(bufnr('')))
+    echo 'Opened in the system viewer: ' . expand('%:t')
+  else
+    echohl WarningMsg | echo 'No system viewer here (xdg-open), e.g. over ssh' | echohl None
+  endif
+endfunction
+" a file or link in the system's own program (viewer, browser): 0 where there is none (over ssh)
+function! s:OpenExternal(target) abort
+  let t = a:target
   if executable('wslpath') && executable('explorer.exe') && !executable('wslview')
-    let cmd = ['explorer.exe', trim(system('wslpath -w ' . shellescape(f)))]
+    " (a link as it is; a file by its Windows path)
+    let cmd = ['explorer.exe', t =~# '^\a\+://' ? t : trim(system('wslpath -w ' . shellescape(t)))]
   else
     " (not open: on some Linux systems that is openvt, which starts a console)
-    let cmd = map(filter(['xdg-open', 'wslview'], 'executable(v:val)')[: 0], '[v:val, f]')
+    let cmd = map(filter(['xdg-open', 'wslview'], 'executable(v:val)')[: 0], '[v:val, t]')
     let cmd = empty(cmd) ? [] : cmd[0]
   endif
-  if empty(cmd)
-    echohl WarningMsg | echo 'No system viewer here (xdg-open), e.g. over ssh' | echohl None
-    return
+  if empty(cmd) || $DISPLAY ==# '' && $WAYLAND_DISPLAY ==# '' && cmd[0] ==# 'xdg-open'
+    return 0
   endif
   call job_start(cmd, {'stoponexit': '', 'in_io': 'null', 'out_io': 'null', 'err_io': 'null'})
-  echo 'Opened in the system viewer: ' . expand('%:t')
+  return 1
 endfunction
 " no line numbers or cursor line over a picture; redrawn to fit after a resize
 let s:view_opts = 'nonumber norelativenumber nocursorline nolist nowrap signcolumn=no colorcolumn= foldcolumn=0'
@@ -3471,6 +3479,149 @@ nnoremap <C-h> <C-w>h
 nnoremap <C-j> <C-w>j
 nnoremap <C-k> <C-w>k
 nnoremap <C-l> <C-w>l
+
+" links and file names: Ctrl+click (VSCode's), or gx at the cursor, in the files and the terminals.
+" A link opens in the browser (over ssh, where there is none, it is copied); a file name, with
+" its :line:col (file.c:12:5, file.c(12), Python's File "x.py", line 12, a/ b/ of a diff), in the
+" editor at that place; a folder in the tree. Ctrl+click on anything else goes to its definition.
+function! s:LinkAt(text, col, dir) abort
+  let [t, c] = [a:text, a:col]
+  " (the match of pattern that covers the column: [text, start] or [])
+  let Covering = {pat -> s:Covering(t, c, pat)}
+  " (anywhere on a Markdown link, its text too: where it goes)
+  let md = Covering('\[[^\]]*\]([^) ]\+\%(\s\+"[^"]*"\)\=)')
+  let md = empty(md) ? [] : [matchstr(md[0], '\](\zs[^) ]\+'), md[1]]
+  let m = !empty(md) ? md : Covering('\%(https\=\|ftp\|file\)://[^[:space:]<>"''`]\+')
+  if !empty(m) && m[0] =~# '^\a\+://'
+    let url = s:LinkTrim(m[0])
+    if url !~# '^file://'
+      return ['url', url]
+    endif
+    let m = [substitute(url, '^file://', '', ''), 0]
+  endif
+  " Python: File "x.py", line 12
+  let py = matchlist(t, 'File "\([^"]\+\)", line \(\d\+\)')
+  if !empty(py) && c > stridx(t, 'File "') && c <= matchend(t, 'File "[^"]\+", line \d\+')
+    return s:LinkFile(py[1], str2nr(py[2]), 0, a:dir)
+  endif
+  if empty(m)
+    let m = Covering('\f\+\%(:\d\+\%(:\d\+\)\=\|(\d\+\%(,\s*\d\+\)\=)\)\=')
+  endif
+  if empty(m)
+    return []
+  endif
+  let p = matchlist(m[0], '^\(.\{-}\)\%(:\(\d\+\)\%(:\(\d\+\)\)\=\|(\(\d\+\)\%(,\s*\(\d\+\)\)\=)\)\=$')
+  return s:LinkFile(p[1], str2nr(p[2] . p[4]), str2nr(p[3] . p[5]), a:dir)
+endfunction
+function! s:Covering(text, col, pat) abort
+  let start = 0
+  while 1
+    let [m, s, e] = matchstrpos(a:text, a:pat, start)
+    if s < 0 || s >= a:col
+      return []
+    endif
+    if a:col <= e
+      return [m, s]
+    endif
+    let start = max([e, s + 1])
+  endwhile
+endfunction
+" (a link's end without the sentence's punctuation, or a closing bracket it did not open)
+function! s:LinkTrim(url) abort
+  let u = substitute(a:url, '[.,;:!?''"]\+$', '', '')
+  while u =~# ')$' && count(u, ')') > count(u, '(')
+    let u = u[: -2]
+  endwhile
+  return u
+endfunction
+" ['file', path, line, col] for a name that is there (from this file's folder, then the project's),
+" else []
+function! s:LinkFile(name, lnum, col, dir) abort
+  let n = substitute(a:name, '[.,;:]\+$', '', '')
+  " (a name with a / or a . : a word in the code is a name to look up, not a file)
+  if n !~# '[/.]' || n =~# '^\.\+$'
+    return []
+  endif
+  let n = n =~# '^\~' ? expand(n) : n
+  let tries = n =~# '^/' ? [n] : [a:dir . '/' . n, getcwd() . '/' . n]
+  " (git's a/ and b/ in a diff)
+  if n =~# '^[ab]/'
+    call extend(tries, [a:dir . '/' . n[2 :], getcwd() . '/' . n[2 :]])
+  endif
+  for f in tries
+    if filereadable(f) || isdirectory(f)
+      return ['file', simplify(fnamemodify(f, ':p')), a:lnum, a:col]
+    endif
+  endfor
+  return []
+endfunction
+" the folder a terminal's shell is in now (it may have cd'd), else vim's
+function! s:TermCwd(buf) abort
+  let job = term_getjob(a:buf)
+  let pid = job_status(job) ==# 'run' ? job_info(job).process : 0
+  let d = pid ? resolve('/proc/' . pid . '/cwd') : ''
+  return isdirectory(d) ? d : getcwd()
+endfunction
+function! s:LinkOpen(link) abort
+  if a:link[0] ==# 'url'
+    if s:OpenExternal(a:link[1])
+      call s:Say('Opened in the browser: ' . a:link[1])
+    else
+      " (to the system's clipboard: vim's, else the terminal's own way, OSC 52; and to p)
+      if has('clipboard_working')
+        call setreg('+', a:link[1])
+      else
+        call echoraw("\e]52;c;" . base64_encode(str2blob([a:link[1]])) . "\x07")
+      endif
+      call setreg('"', a:link[1])
+      call s:Say('No browser here: the link is copied (' . a:link[1] . ')')
+    endif
+    return
+  endif
+  let [_, f, lnum, col] = a:link
+  call s:EditWin()
+  normal! m'
+  execute 'edit' fnameescape(fnamemodify(f, ':~:.'))
+  if lnum > 0
+    call cursor(lnum, max([1, col]))
+    normal! zz
+  endif
+endfunction
+" the link or file name in a window at a line and column
+function! s:LinkIn(win, lnum, col) abort
+  let b = winbufnr(a:win)
+  let dir = getbufvar(b, '&buftype') ==# 'terminal' ? s:TermCwd(b) : fnamemodify(bufname(b), ':p:h')
+  return s:LinkAt(get(getbufline(b, a:lnum), 0, ''), a:col, isdirectory(dir) ? dir : getcwd())
+endfunction
+function! s:CtrlClick() abort
+  let m = getmousepos()
+  if !m.winid || m.line < 1
+    return
+  endif
+  let link = s:LinkIn(m.winid, m.line, m.column)
+  if !empty(link)
+    call s:LinkOpen(link)
+  elseif getbufvar(winbufnr(m.winid), '&buftype') ==# ''
+    " (VSCode's Ctrl+click on a name: its definition)
+    call win_gotoid(m.winid)
+    call cursor(m.line, m.column)
+    call s:GoDef()
+  else
+    call win_gotoid(m.winid)
+  endif
+endfunction
+function! s:OpenAtCursor() abort
+  let link = s:LinkIn(win_getid(), line('.'), col('.'))
+  if empty(link)
+    call s:Say('No link or file name under the cursor')
+  else
+    call s:LinkOpen(link)
+  endif
+endfunction
+nnoremap <silent> <C-LeftMouse> :call <SID>CtrlClick()<CR>
+inoremap <silent> <C-LeftMouse> <C-o>:call <SID>CtrlClick()<CR>
+tnoremap <silent> <C-LeftMouse> <C-w>:call <SID>CtrlClick()<CR>
+nnoremap <silent> gx :call <SID>OpenAtCursor()<CR>
 
 " code: vim's gd / gr / K / ]e [e, VSCode's F12, Space c for the rest
 nnoremap <silent> <F12> :call <SID>GoDef()<CR>
