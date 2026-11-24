@@ -1539,6 +1539,19 @@ function! s:FastNERDTree() abort
     let g:NERDTreeDirNode._renderToString = function('s:NERDTreeRender')
     let g:NERDTreeFileNode._renderToString = function('s:NERDTreeRender')
   endif
+  " the git colors arriving while typing wait for the typing to stop: putting them in went to the
+  " tree's window and back, which put the cursor one letter back or ended insert mode (a save
+  " just before, Ctrl+s or the autosave on Esc, then typing again at once)
+  if exists('g:NERDTreePathNotifier') && !exists('s:tree_git_ui')
+    for L in g:NERDTreePathNotifier.GetListenersForEvent('init')
+      " (get() with a default gives the default here, not the partial's dictionary)
+      let d = type(L) == v:t_func ? get(L, 'dict') : {}
+      if type(d) == v:t_dict && has_key(d, 'TryUpdateNERDTreeUI')
+        let s:tree_git_ui = d.TryUpdateNERDTreeUI
+        let d.TryUpdateNERDTreeUI = function('s:TreeGitUI')
+      endif
+    endfor
+  endif
   if exists('g:NERDTreeMenuItem')
     let ours = {'NERDTreeAddNode': 'VimzipTreeAdd', 'NERDTreeMoveNode': 'VimzipTreeMove', 'NERDTreeCopyNode': 'VimzipTreeCopy'}
     for item in g:NERDTreeMenuItem.All()
@@ -1547,6 +1560,17 @@ function! s:FastNERDTree() abort
       endif
     endfor
   endif
+endfunction
+function! s:TreeGitUI() dict abort
+  if mode() !=# 'n'
+    let s:tree_git_wait = self
+    augroup vimzip_tree_git_later
+      autocmd!
+      autocmd InsertLeave * ++once call timer_start(0, {-> s:tree_git_wait.TryUpdateNERDTreeUI()})
+    augroup END
+    return
+  endif
+  call call(s:tree_git_ui, [], self)
 endfunction
 " the tree's m menu (add, move / rename, copy): a path typed without its folder is taken in the
 " selected node's folder (calc2.c: renamed where it is, new.c: created in the selected folder), not
@@ -2311,6 +2335,15 @@ function! s:RevealInTree() abort
   if &buftype !=# '' || !exists('g:NERDTree') || !g:NERDTree.IsOpen()
     return
   endif
+  " (a file saved while typing, Ctrl+s: going to the tree and back ended insert mode, and the next
+  " letters typed ran as commands; shown once the typing stops)
+  if mode() !=# 'n'
+    augroup vimzip_reveal_later
+      autocmd!
+      autocmd InsertLeave * ++once call timer_start(0, {-> s:RevealInTree()})
+    augroup END
+    return
+  endif
   let f = expand('%:p')
   try
     let root = g:NERDTree.ForCurrentTab().root.path.str()
@@ -2394,6 +2427,14 @@ endfunction
 function! s:TermKeys() abort
   tnoremap <buffer> <silent> <C-v> <C-w>""
   nnoremap <buffer> <silent> p i<C-w>""
+  " Ctrl+s from habit saves the files: the shell took it as "pause the output" (XOFF), and the
+  " terminal looked frozen until Ctrl+q
+  tnoremap <buffer> <silent> <C-s> <C-w>:call <SID>TermSave()<CR>
+endfunction
+function! s:TermSave() abort
+  let n = len(getbufinfo({'bufmodified': 1, 'buflisted': 1}))
+  silent! wall
+  call s:Say(n ? 'Saved ' . s:Count(n, 'file') : 'All files are saved')
 endfunction
 
 " ─── sessions and projects ───────────────────────────────────────────────────────────────────────
@@ -3404,10 +3445,14 @@ function! s:Save() abort
     endif
     silent! call mkdir(fnamemodify(name, ':h'), 'p')
     try
-      execute 'write' . bang fnameescape(fnamemodify(name, ':~:.'))
+      " (quietly, then one short line: with the question still above it, vim's own message stopped at
+      " Press ENTER, and from insert mode the next letters typed ran as commands)
+      silent execute 'write' . bang fnameescape(fnamemodify(name, ':~:.'))
       if &filetype ==# ''
-        filetype detect
+        silent filetype detect
       endif
+      redraw
+      call s:Say('Saved ' . fnamemodify(name, ':~:.'))
     catch
       call s:Say(substitute(v:exception, '^Vim(\a\+):', '', ''), 'ErrorMsg')
     endtry
@@ -3596,6 +3641,9 @@ function! s:Build() abort
   call win_gotoid(from)
   call s:Layout()
 endfunction
+function! s:Count(n, what) abort
+  return a:n . ' ' . a:what . (a:n == 1 ? '' : 's')
+endfunction
 function! s:BuildDone(status) abort
   if !bufexists(get(s:, 'build', -1))
     return
@@ -3613,9 +3661,9 @@ function! s:BuildDone(status) abort
   let errors = len(filter(copy(s:build_problems), 'v:val.type ==# "E"'))
   call s:ProblemsUpdate()
   if a:status == 0
-    call s:Say('Build succeeded' . (empty(s:build_problems) ? '' : printf(' (%d warnings: Space cp)', len(s:build_problems))))
+    call s:Say('Build succeeded' . (empty(s:build_problems) ? '' : printf(' (%s: Space cp)', s:Count(len(s:build_problems), 'warning'))))
   else
-    call s:Say('Build failed' . (empty(s:build_problems) ? '' : printf(': %d errors, %d warnings (Space cp lists them)', errors, len(s:build_problems) - errors)), 'WarningMsg')
+    call s:Say('Build failed' . (empty(s:build_problems) ? '' : printf(': %s, %s (Space cp lists them)', s:Count(errors, 'error'), s:Count(len(s:build_problems) - errors, 'warning'))), 'WarningMsg')
   endif
 endfunction
 
@@ -3886,7 +3934,7 @@ function! s:MultiApply() abort
     let new = strpart(t, 0, at) . typed . strpart(t, e.op ==# 'c' ? at + e.len : at)
     undojoin | call setline(l, new)
   endfor
-  call s:Say('Changed ' . len(e.pos) . ' places')
+  call s:Say('Changed ' . s:Count(len(e.pos), 'place'))
 endfunction
 
 " find and replace in the project (VSCode's Ctrl+Shift+h): the text (the selection or the word under
@@ -3928,8 +3976,8 @@ function! s:Replace(text) abort
   setlocal filetype=vimzipreplace
   silent file [Replace]
   let files = len(uniq(sort(map(copy(matches), 'v:val[0]'))))
-  let head = printf('Replace "%s" with "%s": %d lines in %d files.  Enter: replace  dd: leave one out  q: cancel',
-        \ find, with, len(matches), files)
+  let head = printf('Replace "%s" with "%s": %s in %s.  Enter: replace  dd: leave one out  q: cancel',
+        \ find, with, s:Count(len(matches), 'line'), s:Count(files, 'file'))
   let b:vimzip_replace = {'find': find, 'with': with, 'head': head}
   call setline(1, head)
   let n = 1
@@ -4014,7 +4062,7 @@ function! s:ReplaceApply() abort
     endif
     let files += done > before
   endfor
-  call s:Say(printf('Replaced %d in %d file%s', done, files, files == 1 ? '' : 's'))
+  call s:Say(printf('Replaced %d in %s', done, s:Count(files, 'file')))
 endfunction
 
 nnoremap <silent> <leader>cr :call <SID>Rename()<CR>
@@ -4058,8 +4106,12 @@ function! s:PairOpen(ch) abort
   if !s:PairsOn() || (has_key(s:no_pair, a:ch) && &filetype =~# s:no_pair[a:ch]) || next !~# '^\%(\s\|[)\]}>,;:.=]\|\)$'
     return a:ch
   endif
-  " (a quote right after a letter or another quote is an apostrophe or a closing one)
-  if a:ch =~# '[''"`]' && prev =~# '\k\|[''"`\\]'
+  " (a quote right after a letter or another quote is an apostrophe or a closing one; not after a
+  " string's prefix: Python's f'', r'', b'', C's L"", u8"")
+  let word = matchstr(strpart(line, 0, col('.') - 1), '\<\k\+$')
+  let prefix = &filetype ==# 'python' ? word =~? '^\%([fburt]\|[rb][fbr]\|[fb]r\)$'
+        \ : &filetype =~# '^\%(c\|cpp\)$' && word =~# '^\%(L\|u\|U\|u8\)$'
+  if a:ch =~# '[''"`]' && prev =~# '\k\|[''"`\\]' && !prefix
     return a:ch
   endif
   return a:ch . s:pairs[a:ch] . "\<C-g>U\<Left>"
@@ -4489,6 +4541,10 @@ function! s:PeekKey(id, key) abort
     return 1
   elseif a:key ==# "\<CR>"
     call popup_close(a:id)
+    " (from a panel, the terminal's or a list's: in the editor, not over the panel)
+    if &buftype !=# ''
+      call s:EditWin()
+    endif
     normal! m'
     execute 'edit' fnameescape(s:peek.file)
     call cursor(s:peek.lnum, 1)
