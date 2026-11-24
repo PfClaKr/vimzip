@@ -4048,8 +4048,12 @@ function! s:PairOpen(ch) abort
   if !s:PairsOn() || (has_key(s:no_pair, a:ch) && &filetype =~# s:no_pair[a:ch]) || next !~# '^\%(\s\|[)\]}>,;:.=]\|\)$'
     return a:ch
   endif
-  " (a quote right after a letter or another quote is an apostrophe or a closing one)
-  if a:ch =~# '[''"`]' && prev =~# '\k\|[''"`\\]'
+  " (a quote right after a letter or another quote is an apostrophe or a closing one; not after a
+  " string's prefix: Python's f'', r'', b'', C's L"", u8"")
+  let word = matchstr(strpart(line, 0, col('.') - 1), '\<\k\+$')
+  let prefix = &filetype ==# 'python' ? word =~? '^\%([fburt]\|[rb][fbr]\|[fb]r\)$'
+        \ : &filetype =~# '^\%(c\|cpp\)$' && word =~# '^\%(L\|u\|U\|u8\)$'
+  if a:ch =~# '[''"`]' && prev =~# '\k\|[''"`\\]' && !prefix
     return a:ch
   endif
   return a:ch . s:pairs[a:ch] . "\<C-g>U\<Left>"
