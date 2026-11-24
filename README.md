@@ -44,10 +44,11 @@ Opens the file tree and the files you had open last time. Files save themselves.
 - **Debug**: gdb with breakpoints (`F5`, `F9`, `F10`, `F11`)
 - **Images and PDFs**: open like any file. Pictures are drawn in real pixels in terminals that can
   (sixel: Windows Terminal, Konsole, WezTerm, foot, xterm, GNOME Terminal and Terminator when their
-  VTE has it; kitty and Ghostty), elsewhere and inside tmux with half blocks. PDF pages are shown
+  VTE has it; kitty and Ghostty); else GNOME Terminal and Terminator draw them with octants (2 x 4
+  parts a cell), other terminals and tmux with half blocks. PDF pages are shown
   the same way when `pdftoppm` (poppler) is installed (`n` / `p` turn the page, `t` shows the text),
   else their text. `o` opens the file in the system viewer. The Markdown preview draws the
-  pictures it links to. `let g:vimzip_images = 'blocks'` (or `'sixel'`, `'kitty'`) chooses the way,
+  pictures it links to. `let g:vimzip_images = 'blocks'` (or `'sixel'`, `'kitty'`, `'octants'`) chooses the way,
   `let g:vimzip_cell_pixels = [10, 20]` a cell's size when the terminal does not tell it
 
 Vim's own keys all work. The added ones are grouped under `Space` by topic (`f` find, `g` git,
