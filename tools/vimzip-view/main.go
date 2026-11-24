@@ -6,6 +6,8 @@
 //	  colors as rrggbb in 16 steps a channel, or xterm-256 numbers with the 256 argument
 //	vimzip-view pdf FILE
 //	  the text, pages separated by form feeds (for when pdftotext is not installed)
+//	vimzip-view sixel|kitty FILE COLS ROWS CELLW CELLH
+//	  the picture in real pixels, for terminals that can draw them (see pixels.go)
 package main
 
 import (
@@ -41,10 +43,17 @@ func main() {
 		cols, _ := strconv.Atoi(os.Args[3])
 		rows, _ := strconv.Atoi(os.Args[4])
 		err = picture(os.Args[2], max(cols, 1), max(rows, 1), len(os.Args) > 5 && os.Args[5] == "256")
+	case len(os.Args) == 7 && (os.Args[1] == "sixel" || os.Args[1] == "kitty"):
+		var n [4]int
+		for i := range n {
+			n[i], _ = strconv.Atoi(os.Args[3+i])
+			n[i] = max(n[i], 1)
+		}
+		err = pixels(os.Args[1], os.Args[2], n[0], n[1], n[2], n[3])
 	case len(os.Args) == 3 && os.Args[1] == "pdf":
 		err = text(os.Args[2])
 	default:
-		err = fmt.Errorf("usage: vimzip-view image FILE COLS ROWS [256] | pdf FILE")
+		err = fmt.Errorf("usage: vimzip-view image FILE COLS ROWS [256] | pdf FILE | sixel|kitty FILE COLS ROWS CELLW CELLH")
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "vimzip-view:", err)
