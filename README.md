@@ -57,7 +57,8 @@ Opens the file tree and the files you had open last time. Files save themselves.
 Vim's own keys all work. The added ones are grouped under `Space` by topic (`f` find, `g` git,
 `c` code, `t` terminal, `d` debug). Every list takes the same keys: `Enter` opens, `Ctrl+v` beside,
 `Ctrl+x` below (searches, the tree, problems, a peeked definition), and `q` closes a list or
-panel. **`Space ?` shows every key and `:` command.**
+panel. **`Space ?` (or `F1`) shows every key and `:` command**, and `Space` held a moment a menu of
+the keys that can follow it. The first start shows the few keys to begin with.
 
 ![Space ?](docs/keys.png)
 

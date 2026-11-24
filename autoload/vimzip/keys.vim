@@ -127,7 +127,8 @@ let s:vimzip = [
       \   ['K', '(debugging) value under cursor'],
       \   ['click Step  Next ...', 'the buttons over the source']]],
       \ ['More', [
-      \   ['Space ?', 'this help']]],
+      \   ['Space ?  F1', 'this help'],
+      \   ['Space, then wait', 'a menu of the keys after it']]],
       \ ]
 
 let s:vim = [
@@ -582,4 +583,121 @@ function! s:Filter(id, key) abort
     call popup_close(a:id)
   endif
   return 0
+endfunction
+
+" ─── the Space menu ──────────────────────────────────────────────────────────────────────────────
+" Space held a moment (or pressed alone): the keys that can follow it, a group's (f, g, c...) after
+" its letter, at the bottom of the screen; typing goes on as if the menu were not there, Backspace
+" goes back, ? opens the whole help, Esc closes.
+let s:groups = {'f': 'find', 'g': 'git', 'c': 'code', 't': 'terminal', 'd': 'debug', 'm': 'merge conflict'}
+
+" 'ff' -> 'file by name': from the help's entries (the Space keys among an entry's alternatives, and
+" a group's letters after them: 'Space mc  mi  mb')
+function! s:LeaderWords() abort
+  let words = {}
+  for [_, rows] in s:vimzip
+    for [keys, what] in rows
+      let space = 0
+      for k in split(keys, '\s\{2,}')
+        if k =~# '^Space \S\+$'
+          let space = 1
+          let words[k[6 :]] = what
+        elseif space && k =~# '^\S\{1,2}$'
+          let words[k] = what
+        endif
+      endfor
+    endfor
+  endfor
+  " (vim's man page plugin adds Space K)
+  return extend(words, {'K': 'manual page of the word', '?': 'every key and command'})
+endfunction
+
+" the Space keys of normal mode that start with prefix: {rest: what it does}
+function! s:LeaderKeys(prefix) abort
+  let words = s:LeaderWords()
+  let keys = {}
+  for m in maplist()
+    if m.mode !~# 'n\|^ $' || m.lhs !~# '^<Space>' . escape(a:prefix, '\') . '.'
+      continue
+    endif
+    let rest = m.lhs[7 + len(a:prefix) :]
+    let next = rest[0]
+    if len(rest) > 1 && a:prefix ==# ''
+      " (a group: shown as one entry)
+      let keys[next] = get(s:groups, next, next) . ' …'
+    elseif len(rest) == 1
+      let name = matchstr(m.rhs, '\c<SID>\zs\w\+\|\%(:\|^\)\zs\u\w\+')
+      let keys[rest] = get(words, a:prefix . rest, name ==# '' ? m.rhs : name)
+    endif
+  endfor
+  return keys
+endfunction
+
+function! vimzip#keys#menu(...) abort
+  call s:Highlights()
+  let s:menu_prefix = a:0 ? a:1 : ''
+  let keys = s:LeaderKeys(s:menu_prefix)
+  if empty(keys)
+    return
+  endif
+  " columns of 'k  what it does', as many as fit
+  let order = sort(keys(keys), {a, b -> (keys[a] =~# '…$') != (keys[b] =~# '…$') ? (keys[a] =~# '…$' ? -1 : 1) : a ==? b ? (a <# b ? -1 : 1) : (a <? b ? -1 : 1)})
+  let cells = map(copy(order), {_, k -> [k, keys[k]]})
+  let width = min([max(map(copy(cells), 'strdisplaywidth(v:val[1])')) + 6, 34])
+  " (narrower columns on a small screen rather than a list taller than it)
+  let width = max([18, min([width, (&columns - 4) / max([1, min([3, len(cells) * 2 / max([1, &lines - 6])])])])])
+  let ncols = max([1, (&columns - 4) / width])
+  let nrows = (len(cells) + ncols - 1) / ncols
+  let [lines, props] = [[], []]
+  for r in range(nrows)
+    let line = ''
+    for c in range(ncols)
+      let i = c * nrows + r
+      if i >= len(cells)
+        break
+      endif
+      let [k, what] = cells[i]
+      let what = strdisplaywidth(what) > width - 5 ? strcharpart(what, 0, width - 6) . '…' : what
+      call add(props, [r + 1, len(line) + 1, len(k), 'vimzip_help_Key'])
+      let line .= k . ' ' . what . repeat(' ', width - strdisplaywidth(k . ' ' . what))
+    endfor
+    call add(lines, line)
+  endfor
+  let title = ' Space ' . s:menu_prefix . (s:menu_prefix ==# '' ? '' : ' (' . get(s:groups, s:menu_prefix, '') . ')')
+        \ . '   type a key   ' . (s:menu_prefix ==# '' ? '? all keys' : 'Backspace back') . '   Esc close '
+  silent! call popup_close(get(s:, 'menu_id', -1))
+  let s:menu_id = popup_create(lines, {'line': max([1, &lines - &cmdheight - 1 - len(lines) - 1]), 'col': 1,
+        \ 'maxheight': &lines - &cmdheight - 3, 'scrollbar': 1,
+        \ 'minwidth': &columns - 2, 'maxwidth': &columns - 2, 'border': [1, 0, 0, 0], 'borderchars': ['─'],
+        \ 'title': title, 'padding': [0, 1, 0, 1], 'zindex': 300, 'highlight': 'Normal',
+        \ 'filter': function('s:MenuKey'), 'mapping': 0})
+  for [l, c, n, type] in props
+    call prop_add(l, c, {'length': n, 'type': type, 'bufnr': winbufnr(s:menu_id)})
+  endfor
+endfunction
+
+function! s:MenuKey(id, key) abort
+  if a:key[0] ==# "\x80" && a:key !=# "\<BS>"
+    return 0  " (vim's own events: the cursor resting, the mouse moving)
+  endif
+  call popup_close(a:id)
+  if a:key ==# "\<Esc>" || a:key ==# "\<C-c>"
+    return 1
+  elseif a:key ==# "\<BS>"
+    if s:menu_prefix !=# ''
+      call vimzip#keys#menu()
+    endif
+    return 1
+  elseif a:key ==# '?' && s:menu_prefix ==# ''
+    call vimzip#keys#show()
+    return 1
+  endif
+  let seq = s:menu_prefix . a:key
+  if !empty(maparg('<Space>' . seq, 'n'))
+    " (as if typed: the Space mapping runs)
+    call feedkeys("\<Space>" . seq, 'm')
+  elseif s:menu_prefix ==# '' && !empty(s:LeaderKeys(seq))
+    call vimzip#keys#menu(seq)
+  endif
+  return 1
 endfunction

@@ -5730,6 +5730,61 @@ nmap <silent> <expr> [c &diff ? '[c' : '<Plug>(GitGutterPrevHunk)'
 
 " Space ?: every key on one page (autoload/vimzip/keys.vim)
 nnoremap <silent> <leader>? :call vimzip#keys#show()<CR>
+" F1 (vim's opens its own manual): the keys too
+nnoremap <silent> <F1> :call vimzip#keys#show()<CR>
+inoremap <silent> <F1> <C-o>:call vimzip#keys#show()<CR>
+" Space held (nothing typed after it for a moment): a menu of what can follow, as VSCode users
+" look for one; quicker than vim's second to wait
+set timeoutlen=800
+nnoremap <silent> <leader> :call vimzip#keys#menu()<CR>
+
+" the first start: what to try first and where the keys are, once (the first key typed closes it
+" and does its job)
+function! s:Welcome() abort
+  let mark = s:cache . '/welcomed'
+  if filereadable(mark) || &diff || get(g:, 'vimzip_welcome', 1) == 0
+    return
+  endif
+  silent! call mkdir(s:cache, 'p')
+  call writefile([], mark)
+  let rows = [['Ctrl+p', 'open a file by name'], ['Ctrl+Shift+f', 'find text in the project (Space fs)'],
+        \ ['Space e', 'the file tree'], ['F4', 'a terminal'], ['Ctrl+s', 'save (files save themselves too)'],
+        \ [':q', 'close the tab (the last one quits vim)'], ['', ''],
+        \ ['Space ?  F1', 'every key and command'], ['Space, wait', 'a menu of the keys that follow it']]
+  let lines = ['Welcome to vimzip, a VSCode-like vim', ''] + map(copy(rows), 'v:val[0] ==# "" ? "" : printf("  %-13s %s", v:val[0], v:val[1])')
+  let id = popup_create(lines + ['', 'any key to start'], {'border': [], 'padding': [1, 3, 1, 3], 'zindex': 250,
+        \ 'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'], 'highlight': 'Normal', 'mapping': 0,
+        \ 'filter': {id, key -> [popup_close(id), 0][1]}})
+  call matchaddpos('Title', [1], 10, -1, {'window': id})
+  call matchaddpos('Comment', [len(lines) + 2], 10, -1, {'window': id})
+  for i in range(len(rows))
+    if rows[i][0] !=# ''
+      call matchaddpos('VimzipBar', [[i + 3, 3, strlen(rows[i][0])]], 10, -1, {'window': id})
+    endif
+  endfor
+endfunction
+autocmd VimEnter * call timer_start(300, {-> s:Welcome()})
+
+" an empty editor (vim started on a folder, every tab closed): a few keys in it, faintly, until
+" something is typed
+silent! call prop_type_add('vimzip_hint', {'highlight': 'Comment'})
+function! s:EmptyHints() abort
+  let empty = &buftype ==# '' && bufname('') ==# '' && line('$') == 1 && getline(1) ==# '' && !exists('b:vimzip_view')
+  if empty && !get(b:, 'vimzip_hints', 0)
+    let b:vimzip_hints = 1
+    for t in ['Ctrl+p  open a file     Ctrl+Shift+f  find text     Space e  file tree',
+          \ 'F4  terminal     Space ?  every key (F1)     Space, then wait: a menu']
+      call prop_add(1, 0, {'type': 'vimzip_hint', 'text': t, 'text_align': 'below', 'text_padding_left': 2})
+    endfor
+  elseif !empty && get(b:, 'vimzip_hints', 0)
+    let b:vimzip_hints = 0
+    silent! call prop_remove({'type': 'vimzip_hint', 'all': 1})
+  endif
+endfunction
+augroup vimzip_hints
+  autocmd!
+  autocmd VimEnter,BufWinEnter,TextChanged,TextChangedI,BufFilePost * call s:EmptyHints()
+augroup END
 
 " the same keys while typing or selecting (unmapped, vim would type "<F4>" into the file)
 for s:k in ['<F2>', '<F3>', '<F4>', '<F5>', '<F10>', '<F11>', '<F12>', '<C-S-f>', '<C-S-e>', '<C-M-i>', '<C-S-b>', '<C-.>']
