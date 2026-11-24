@@ -2418,6 +2418,14 @@ endfunction
 function! s:TermKeys() abort
   tnoremap <buffer> <silent> <C-v> <C-w>""
   nnoremap <buffer> <silent> p i<C-w>""
+  " Ctrl+s from habit saves the files: the shell took it as "pause the output" (XOFF), and the
+  " terminal looked frozen until Ctrl+q
+  tnoremap <buffer> <silent> <C-s> <C-w>:call <SID>TermSave()<CR>
+endfunction
+function! s:TermSave() abort
+  let n = len(getbufinfo({'bufmodified': 1, 'buflisted': 1}))
+  silent! wall
+  call s:Say(n ? 'Saved ' . s:Count(n, 'file') : 'All files are saved')
 endfunction
 
 " ─── sessions and projects ───────────────────────────────────────────────────────────────────────

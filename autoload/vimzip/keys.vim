@@ -62,6 +62,7 @@ let s:vimzip = [
       \   ['Space ts  Space tv', 'new terminal below / beside'],
       \   ['Ctrl+w s  Ctrl+w v', '(in a terminal) one more'],
       \   ['Ctrl+v', '(in a terminal) paste'],
+      \   ['Ctrl+s', '(in a terminal) save the files'],
       \   ['Ctrl+w N  y  i', 'copy: select, y, back to typing']]],
       \ ['Code', [
       \   ['F12', 'go to definition (as gd)'],
