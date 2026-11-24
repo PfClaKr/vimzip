@@ -3036,11 +3036,11 @@ function! s:Pixels(buf) abort
   return v:termda1 =~# '[?;]4[;c]' ? 'sixel' : ''
 endfunction
 " without pixels, a cell split in 2 x 4 parts (the octants of Unicode 16) where the terminal draws
-" those characters itself, as VTE does (GNOME Terminal, Terminator...): four times finer than half
+" those characters itself, as VTE 0.80 does (GNOME Terminal, Terminator...): four times finer than half
 " blocks. g:vimzip_images = 'octants' for others whose font has them.
 function! s:Octants() abort
   let want = get(g:, 'vimzip_images', 'auto')
-  return want ==# 'octants' || want ==# 'auto' && str2nr($VTE_VERSION) >= 7800
+  return want ==# 'octants' || want ==# 'auto' && str2nr($VTE_VERSION) >= 8000
 endfunction
 " a cell's size in screen pixels: the terminal's, or g:vimzip_cell_pixels
 function! s:CellPixels() abort
