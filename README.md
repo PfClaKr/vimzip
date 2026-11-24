@@ -42,8 +42,13 @@ Opens the file tree and the files you had open last time. Files save themselves.
   (`Space go`, or click it in the status bar), push and pull (`Space gP` / `Space gF`)
 - **Panels**: terminal (`F4`), outline (`F3`), an AI agent on the right (`Space a`)
 - **Debug**: gdb with breakpoints (`F5`, `F9`, `F10`, `F11`)
-- **Images and PDFs**: open like any file; pictures are drawn in the window, PDFs show their text
-  (`pdftotext` is used when installed), and `o` opens the file in the system viewer
+- **Images and PDFs**: open like any file. Pictures are drawn in real pixels in terminals that can
+  (sixel: Windows Terminal, Konsole, WezTerm, foot, xterm, GNOME Terminal and Terminator when their
+  VTE has it; kitty and Ghostty), elsewhere and inside tmux with half blocks. PDF pages are shown
+  the same way when `pdftoppm` (poppler) is installed (`n` / `p` turn the page, `t` shows the text),
+  else their text. `o` opens the file in the system viewer. The Markdown preview draws the
+  pictures it links to. `let g:vimzip_images = 'blocks'` (or `'sixel'`, `'kitty'`) chooses the way,
+  `let g:vimzip_cell_pixels = [10, 20]` a cell's size when the terminal does not tell it
 
 Vim's own keys all work. The added ones are grouped under `Space` by topic (`f` find, `g` git,
 `c` code, `t` terminal, `d` debug). **`Space ?` shows every key and `:` command.**

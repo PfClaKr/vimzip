@@ -76,7 +76,8 @@ let s:vimzip = [
       \   ['Space cl', 'language servers on / off'],
       \   ['Space cv  Ctrl+Shift+v', 'Markdown preview beside'],
       \   ['click the right edge', 'jump to that change'],
-      \   ['o', 'picture or PDF: system viewer']]],
+      \   ['o', 'picture or PDF: system viewer'],
+      \   ['n  p  t', 'PDF: next / previous page, text']]],
       \ ['Git', [
       \   ['Space gs', 'status window'],
       \   ['Space gc', 'commit of this line'],
