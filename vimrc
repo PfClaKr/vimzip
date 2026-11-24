@@ -4821,6 +4821,19 @@ function! s:MdRender(src, ...) abort
       let i += 1
       continue
     endif
+    " (a heading underlined, Title / =====, or with ----- under it: not a rule there)
+    if t =~# '\S' && t !~# '^\%(\s*\%([-*+]\|\d\+[.)]\)\s\|\s*>\|    \|\t\)' && i + 1 < n
+          \ && a:src[i + 1] =~# '^\s\{,3}\%(=\+\|-\+\)\s*$'
+      let [text, tp] = s:MdInline(trim(t))
+      let one = a:src[i + 1] =~# '='
+      call add(lines, text)
+      call add(props, [len(lines), 1, max([1, len(text)]), one ? 'vimzip_md_h1' : 'vimzip_md_h2'])
+      call add(lines, repeat(one ? '═' : '─', max([strwidth(text), 3])))
+      call add(props, [len(lines), 1, len(lines[-1]), 'vimzip_md_dim'])
+      call add(map, len(lines))
+      let i += 2
+      continue
+    endif
     if t =~# '^\s\{,3}\([-*_]\)\(\s*\1\)\{2,}\s*$'
       call add(lines, repeat('─', width))
       call add(props, [len(lines), 1, len(lines[-1]), 'vimzip_md_dim'])
