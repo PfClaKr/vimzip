@@ -2304,6 +2304,10 @@ function! s:TreeSync(...) abort
   if exists('g:NERDTree') && g:NERDTree.IsOpen() && mode() ==# 'n'
     " NERDTree's own functions only work from inside its window
     call win_execute(win_getid(g:NERDTree.GetWinNum()), 'call s:TreeSyncHere()')
+    if get(s:, 'head_moved', 0)
+      let s:head_moved = 0
+      call s:GitAfter([])
+    endif
   endif
 endfunction
 function! s:TreeSyncHere() abort
@@ -2331,6 +2335,8 @@ function! s:TreeSyncHere() abort
   endif
   let git = gitdir ==# '' ? [] : [getftime(gitdir . '/index'), getftime(gitdir . '/HEAD')]
   let git_changed = get(s:, 'tree_git', git) != git
+  " (another branch checked out in the terminal: the open files read again, see s:TreeSync)
+  let s:head_moved = get(s:, 'head_moved', 0) || get(s:, 'tree_git', git)[1 :] != git[1 :]
   let s:tree_git = git
   if changed
     call b:NERDTree.render()
@@ -5057,6 +5063,7 @@ function! s:BranchPicked(lines) abort
   let git = 'git -C ' . shellescape(getcwd())
   " (changes typed just now saved first: the files are read again from the new branch)
   call s:QuietWrite('wall')
+  let before = s:GitBefore()
   if picked !=# ''
     let name = trim(split(picked[2 :], "\t")[0])
     " (a remote's branch: a local one following it, as VSCode does)
@@ -5076,17 +5083,49 @@ function! s:BranchPicked(lines) abort
     call s:Say('Not switched: ' . get(filter(split(out, "\n"), 'v:val =~# "error\\|fatal\\|\\S"'), 0, out), 'WarningMsg')
     return
   endif
-  call s:GitAfter()
-  call s:Say('On ' . trim(system(git . ' branch --show-current')))
+  let gone = s:GitAfter(before)
+  call s:Say('On ' . trim(system(git . ' branch --show-current'))
+        \ . (gone ? printf(' (closed %s: not on this branch)', s:Count(gone, 'tab')) : ''))
 endfunction
 " files, signs and the tree as the new branch has them
-function! s:GitAfter() abort
+" (the open files that are there now: after a switch or a pull, those gone are closed)
+function! s:GitBefore() abort
+  return map(filter(getbufinfo({'buflisted': 1}), 'getbufvar(v:val.bufnr, "&buftype") ==# "" && filereadable(v:val.name)'), 'v:val.bufnr')
+endfunction
+" returns how many tabs were closed
+function! s:GitAfter(before) abort
+  let s:heads = {}
   silent! checktime
+  " a file the branch does not have: its tab closed (it showed the old text, and a change typed in
+  " it would have brought the file back); one with changes not saved stays
+  let gone = 0
+  for b in a:before
+    if bufexists(b) && !filereadable(bufname(b)) && !getbufvar(b, '&modified')
+      call s:BufClose(b, '')
+      let gone += 1
+    endif
+  endfor
+  " (a moment later: from a list's or a job's callback vim reads the files again only once it is
+  " over, and the checks then saw the old text)
+  call timer_start(100, {-> s:GitRecheck()})
+  call s:TreeSync()
+  call s:BarRefresh()
+  return gone
+endfunction
+function! s:GitRecheck() abort
+  silent! checktime
+  " the checks and the language server told of the files as they are now (they kept the old
+  " text's problems: a branch's errors showed on another, or none where it had some)
+  if exists('g:loaded_ale')
+    for b in getbufinfo({'buflisted': 1, 'bufloaded': 1})
+      if getbufvar(b.bufnr, '&buftype') ==# ''
+        call ale#Queue(0, 'lint_file', b.bufnr)
+      endif
+    endfor
+  endif
   if exists('g:loaded_gitgutter') && g:gitgutter_enabled
     call gitgutter#all(1)
   endif
-  call s:TreeSync()
-  call s:BarRefresh()
 endfunction
 function! s:GitPanel(what) abort
   if !s:InGit()
@@ -5109,12 +5148,13 @@ function! s:GitPanel(what) abort
     let cmd = 'git pull'
   endif
   call s:QuietWrite('wall')
+  let before = s:GitBefore()
   call s:EditWin()
   let from = win_getid()
   execute 'botright' max([6, min([10, s:PanelSize('term')])]) 'new'
   let blank = bufnr('')
   let buf = term_start([&shell, &shellcmdflag, cmd], {'curwin': 1, 'term_name': 'Git: ' . cmd, 'term_kill': 'hup',
-        \ 'exit_cb': {_, status -> timer_start(200, {-> s:GitPanelDone(buf, cmd, status)})}})
+        \ 'exit_cb': {_, status -> timer_start(200, {-> s:GitPanelDone(buf, cmd, status, before)})}})
   if bufexists(blank) && blank != buf
     execute 'silent! bwipeout' blank
   endif
@@ -5140,12 +5180,12 @@ function! s:GitPanelAsks(buf, timer) abort
     call s:Say('git asks: type the answer in the panel')
   endif
 endfunction
-function! s:GitPanelDone(buf, cmd, status) abort
+function! s:GitPanelDone(buf, cmd, status, before) abort
   if a:status == 0 && bufexists(a:buf)
     execute 'silent! bwipeout!' a:buf
     call s:Layout()
   endif
-  call s:GitAfter()
+  call s:GitAfter(a:before)
   if a:status == 0
     call s:Say(a:cmd =~# 'pull' ? 'Pulled' : 'Pushed')
   else
