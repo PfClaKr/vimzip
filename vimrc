@@ -4520,6 +4520,10 @@ function! s:PeekKey(id, key) abort
     return 1
   elseif a:key ==# "\<CR>"
     call popup_close(a:id)
+    " (from a panel, the terminal's or a list's: in the editor, not over the panel)
+    if &buftype !=# ''
+      call s:EditWin()
+    endif
     normal! m'
     execute 'edit' fnameescape(s:peek.file)
     call cursor(s:peek.lnum, 1)
