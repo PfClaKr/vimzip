@@ -1553,7 +1553,7 @@ function! s:TreeMenu(node, prompt, default, Then) abort
   let new = simplify(fnamemodify(expand(new =~# '^[/~]' ? new : base . '/' . new), ':p'))
   let new = substitute(new, '/$', '', '') . (dir ? '/' : '')
   " NERDTree's own action, its path question answered with the full path
-  call feedkeys("\<C-u>" . new . "\<CR>", 'n')
+  call feedkeys("\<C-u>" . new . "\<CR>", 'ni')
   call a:Then()
 endfunction
 function! VimzipTreeAdd() abort
@@ -3368,6 +3368,32 @@ augroup vimzip_format
 augroup END
 " Ctrl+s also formats a file the autosave has already written
 function! s:Save() abort
+  if &buftype ==# '' && bufname('') ==# ''
+    " a new file: asked where (VSCode's Save As; :update stopped at a press-ENTER error)
+    let name = trim(input('Save as: ', '', 'file'))
+    redraw
+    if name ==# ''
+      return
+    endif
+    let name = fnamemodify(expand(name), ':p')
+    let bang = ''
+    if filereadable(name)
+      if confirm(fnamemodify(name, ':~:.') . ' exists. Replace it?', "&Yes\n&No", 2) != 1
+        return
+      endif
+      let bang = '!'
+    endif
+    silent! call mkdir(fnamemodify(name, ':h'), 'p')
+    try
+      execute 'write' . bang fnameescape(fnamemodify(name, ':~:.'))
+      if &filetype ==# ''
+        filetype detect
+      endif
+    catch
+      call s:Say(substitute(v:exception, '^Vim(\a\+):', '', ''), 'ErrorMsg')
+    endtry
+    return
+  endif
   if !&modified
     let tick = b:changedtick
     call s:Format(1)
@@ -3375,7 +3401,13 @@ function! s:Save() abort
       return
     endif
   endif
-  update
+  try
+    update
+  catch /E45:/
+    call s:NotSaved(bufnr(''))
+  catch
+    call s:Say(substitute(v:exception, '^Vim(\a\+):', '', ''), 'ErrorMsg')
+  endtry
 endfunction
 
 " Space ca / Ctrl+.: the language server's quick fixes and refactorings for this place (VSCode's
@@ -3621,8 +3653,9 @@ function! s:Resolve(which) abort
   let current = getline(start + 1, (base ? base : mid) - 1)
   let incoming = getline(mid + 1, end - 1)
   let keep = a:which ==# 'current' ? current : a:which ==# 'incoming' ? incoming : current + incoming
+  " (added below it first: a file that was only the conflict would keep an empty line)
+  call append(end, keep)
   silent execute 'keepjumps' start . ',' . end . 'delete _'
-  call append(start - 1, keep)
   call cursor(start, 1)
   call s:ConflictMarks()
 endfunction
@@ -3799,7 +3832,8 @@ function! s:MultiEdit(op) abort
   augroup END
   call cursor(l, col)
   if a:op ==# 'c'
-    call feedkeys('"_c' . strchars(text) . 'l', 'n')
+    " (ahead of what is already typed: a fast typist's letters came first, in normal mode)
+    call feedkeys('"_c' . strchars(text) . 'l', 'ni')
   elseif col > len(t)
     startinsert!
   else
