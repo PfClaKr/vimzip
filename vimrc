@@ -3000,8 +3000,11 @@ function! s:CellPixels() abort
   if type(c) == v:t_list && len(c) == 2
     return c
   endif
+  " (Windows Terminal draws sixel as if its cells were 10 x 20, whatever the font)
+  if $WT_SESSION !=# ''
+    return [10, 20]
+  endif
   let c = exists('*getcellpixels') ? getcellpixels() : []
-  " (unknown, as through WSL: Windows Terminal draws sixel as if its cells were 10 x 20)
   return len(c) == 2 && c[0] > 0 && c[1] > 0 ? c : [10, 20]
 endfunction
 " the window's size in cells for the picture, under the header line and a blank one
@@ -3061,13 +3064,20 @@ function! s:ImgShow(buf, out, size) abort
     return
   endif
   let [dims, format] = split(a:out[0] . ' ?')[0 : 1]
-  let lines = [s:ViewHeader(a:buf, format . ' ' . substitute(dims, 'x', ' x ', '')), '']
-  let props = []
+  let [rows, props] = s:BlockRows(a:out[1 :], a:size[0])
+  call s:ViewFill(a:buf, [s:ViewHeader(a:buf, format . ' ' . substitute(dims, 'x', ' x ', '')), ''] + rows)
+  for [lnum, col, length, name] in props
+    call prop_add(lnum + 2, col, {'length': length, 'type': name, 'bufnr': a:buf})
+  endfor
+endfunction
+" vimzip-view's rows of half blocks: [lines, [[line, col, length, group], ...]], centered in width
+function! s:BlockRows(rows, width) abort
+  let [lines, props] = [[], []]
   let gui = &termguicolors
-  for row in a:out[1 :]
+  for row in a:rows
     let runs = map(split(row), 'split(v:val, ":")')
     let width = eval(join(map(copy(runs), 'v:val[0]'), '+'))
-    let text = repeat(' ', max([0, (a:size[0] - width) / 2]) + 1)
+    let text = repeat(' ', max([0, (a:width - width) / 2]) + 1)
     for [n, top, bottom] in runs
       " a group per color, not per pair of them (vim has room for about 20000 groups): one
       " property gives the upper half's color, another the lower's, and vim combines the two
@@ -3080,10 +3090,7 @@ function! s:ImgShow(buf, out, size) abort
     endfor
     call add(lines, text)
   endfor
-  call s:ViewFill(a:buf, lines)
-  for [lnum, col, length, name] in props
-    call prop_add(lnum, col, {'length': length, 'type': name, 'bufnr': a:buf})
-  endfor
+  return [lines, props]
 endfunction
 function! s:ImgGroup(name, hl) abort
   if !has_key(s:img_hl, a:name)
@@ -3132,7 +3139,7 @@ function! s:PixShow(buf, out, key) abort
     call setbufvar(a:buf, 'vimzip_pix', {'kind': 'kitty', 'id': id})
   else
     call s:ViewFill(a:buf, [header, ''] + repeat([''], rows))
-    call setbufvar(a:buf, 'vimzip_pix', {'kind': 'sixel', 'data': a:out[1], 'col': pad, 'rows': rows})
+    call setbufvar(a:buf, 'vimzip_pix', {'kind': 'sixel', 'items': [{'lnum': 3, 'data': a:out[1 :], 'col': pad}]})
     call s:PixDraw(1)
   endif
 endfunction
@@ -3149,9 +3156,9 @@ endfunction
 " a picture shown before (another size, or the buffer goes): the terminal's copy let go
 function! s:PixForget(buf) abort
   let p = getbufvar(a:buf, 'vimzip_pix', {})
-  if get(p, 'kind', '') ==# 'kitty'
-    call echoraw(printf("\e_Ga=d,d=I,i=%d,q=2\e\\", p.id))
-  endif
+  for id in get(p, 'kind', '') ==# 'kitty' ? get(p, 'ids', [get(p, 'id', 0)]) : []
+    call echoraw(printf("\e_Ga=d,d=I,i=%d,q=2\e\\", id))
+  endfor
   call setbufvar(a:buf, 'vimzip_pix', {})
 endfunction
 " sixel pictures are drawn over vim's screen, which does not know they are there: drawn again
@@ -3161,13 +3168,26 @@ let s:pix_sig = ''
 let s:pix_shown = 0
 function! s:PixDraw(force) abort
   let wins = gettabinfo(tabpagenr())[0].windows
-  let todo = filter(map(copy(wins), '[v:val, getbufvar(winbufnr(v:val), "vimzip_pix", {})]'), 'get(v:val[1], "kind", "") ==# "sixel"')
+  " each row of cells of each picture in view: [screen row, col, its sixel]
+  let todo = []
+  for w in wins
+    let p = getbufvar(winbufnr(w), 'vimzip_pix', {})
+    if get(p, 'kind', '') ==# 'sixel'
+      let col = win_screenpos(w)[1]
+      for it in p.items
+        for r in range(len(it.data))
+          let row = screenpos(w, it.lnum + r, 1).row
+          if row && !s:PixCovered([row, col + it.col, 1, winwidth(w) - it.col])
+            call add(todo, [row, col + it.col, it.data[r]])
+          endif
+        endfor
+      endfor
+    endif
+  endfor
   if empty(todo) && !s:pix_shown
     return
   endif
-  let rects = map(copy(todo), 's:PixRect(v:val[0], v:val[1])')
-  let covered = map(copy(rects), 's:PixCovered(v:val)')
-  let sig = string([tabpagenr(), &lines, &columns, rects, covered,
+  let sig = string([tabpagenr(), &lines, &columns, map(copy(todo), 'v:val[0 : 1] + [len(v:val[2])]'),
         \ map(copy(wins), '[v:val, winbufnr(v:val), win_screenpos(v:val), winwidth(v:val), winheight(v:val)]')])
   if !a:force && sig ==# s:pix_sig
     return
@@ -3179,28 +3199,15 @@ function! s:PixDraw(force) abort
   else
     redraw
   endif
-  let s:pix_shown = 0
-  for i in range(len(todo))
-    if !empty(rects[i]) && !covered[i]
-      call echoraw("\e7\e[" . rects[i][0] . ';' . rects[i][1] . 'H' . todo[i][1].data . "\e8")
-      let s:pix_shown = 1
-    endif
-  endfor
+  let s:pix_shown = !empty(todo)
+  if s:pix_shown
+    call echoraw("\e7" . join(map(todo, '"\e[" . v:val[0] . ";" . v:val[1] . "H" . v:val[2]'), '') . "\e8")
+  endif
 endfunction
 function! s:PixAgain() abort
   redraw!
   let s:pix_shown = 0
   call s:PixDraw(1)
-endfunction
-" [row, col, rows, cols] on the screen, or [] when scrolled out of the window
-function! s:PixRect(w, p) abort
-  let top = line('w0', a:w)
-  let [row, col] = win_screenpos(a:w)
-  let first = row + 3 - top
-  if top > 3 || first + a:p.rows - 1 > row + winheight(a:w) - 1
-    return []
-  endif
-  return [first, col + a:p.col, a:p.rows, winwidth(a:w) - a:p.col]
 endfunction
 function! s:PixCovered(r) abort
   if empty(a:r)
@@ -4990,13 +4997,53 @@ function! s:MdInline(text) abort
   endwhile
   return [out, props]
 endfunction
+" does this line end the paragraph before it (or the quote's, inside one)?
+function! s:MdStops(line, quote) abort
+  let l = a:line
+  if a:quote
+    " (a quote goes on while its lines start with as many >)
+    return l !~# '^\s*' . repeat('>', a:quote) . '\%(>\)\@!' || l =~# '^\s*>\+\s*$'
+  endif
+  return l !~# '\S' || l =~# '^\s\{,3}\%(#\{1,6}\%(\s\|$\)\|```\|\~\~\~\|>\|[-*+]\s\|\d\{1,9}[.)]\s\||\)'
+        \ || l =~# '^\s\{,3}\([-*_]\)\%(\s*\1\)\{2,}\s*$' && l !~# '^\s\{,3}-\+\s*$'
+endfunction
+" a paragraph's text in lines of at most width cells, broken at blanks; its marks follow it
+function! s:MdWrap(text, props, width) abort
+  let out = []
+  let [start, n] = [0, len(a:text)]
+  while start < n
+    let rest = strpart(a:text, start)
+    if strwidth(rest) <= a:width
+      let end = n
+    else
+      " the last blank that keeps the line within the width (a longer word: on a line of its own)
+      let cut = strpart(rest, 0, len(strcharpart(rest, 0, a:width + 1)))
+      let b = match(cut, '.*\zs ')
+      let sp = match(rest, ' ', 1)
+      let end = start + (b > 0 ? b : sp > 0 ? sp : len(rest))
+    endif
+    let lp = []
+    for [col, length, type] in a:props
+      let [s0, e0] = [max([col - 1, start]), min([col - 1 + length, end])]
+      if e0 > s0
+        call add(lp, [s0 - start + 1, e0 - s0, type])
+      endif
+    endfor
+    call add(out, [strpart(a:text, start, end - start), lp])
+    let start = end
+    while start < n && a:text[start] ==# ' '
+      let start += 1
+    endwhile
+  endwhile
+  return empty(out) ? [['', []]] : out
+endfunction
 " the preview's lines, their marks, and for each source line the preview line it begins
 function! s:MdRender(src, ...) abort
   let [lines, props, map] = [[], [], []]
   let s:md_in_code = -2
   let i = 0
   let n = len(a:src)
-  let width = min([60, get(a:, 1, 60)])
+  let width = get(a:, 1, 60)
   while i < n
     let t = a:src[i]
     call add(map, len(lines) + 1)
@@ -5093,30 +5140,85 @@ function! s:MdRender(src, ...) abort
       let i += 1
       continue
     endif
-    " lists, quotes and paragraphs, with their inline marks
-    let lead = ''
-    let body = t
+    " lists, quotes and paragraphs: the lines after joined into one (a line break in the file is a
+    " space in Markdown; two spaces or \ at its end break it), then wrapped to the preview's width,
+    " a list item's lines under its first letter
+    if t !~# '\S'
+      call add(lines, '')
+      let i += 1
+      continue
+    endif
+    " a picture on a line of its own: drawn
+    let im = matchlist(t, '^\s*!\[\([^\]]*\)\](<\=\([^)> ]\+\)>\=\%(\s\+[^)]*\)\=)\s*$')
+    let got = !empty(im) && exists('s:md_ctx') ? s:MdImage(im[2]) : []
+    if len(got) == 3
+      let base = len(lines)
+      call extend(lines, got[0])
+      for [l, c, length, type] in got[1]
+        call add(props, [base + l, c, length, type])
+      endfor
+      if has_key(got[2], 'data')
+        call add(s:md_ctx.pix, extend({'lnum': base + 1}, got[2]))
+      elseif has_key(got[2], 'id')
+        call add(s:md_ctx.ids, got[2].id)
+      endif
+      let i += 1
+      continue
+    endif
+    let [lead, next, body, quote] = ['', '', t, 0]
     let m = matchlist(t, '^\(\s*\)\([-*+]\)\s\+\(\[[ xX]\]\s\+\)\=\(.*\)$')
+    let o = matchlist(t, '^\(\s*\)\(\d\{1,9}[.)]\)\s\+\(.*\)$')
     if !empty(m)
       let box = m[3] =~? 'x' ? '☑ ' : m[3] !=# '' ? '☐ ' : ''
       let lead = m[1] . (box !=# '' ? box : '• ')
       let body = m[4]
+    elseif !empty(o)
+      let lead = o[1] . o[2] . ' '
+      let body = o[3]
     else
-      let m = matchlist(t, '^\(\s*>\+\)\s\=\(.*\)$')
-      if !empty(m)
-        let lead = repeat('▎ ', len(substitute(m[1], '[^>]', '', 'g')))
-        let body = m[2]
+      let q = matchlist(t, '^\(\s*>\+\)\s\=\(.*\)$')
+      if !empty(q)
+        let quote = len(substitute(q[1], '[^>]', '', 'g'))
+        let lead = repeat('▎ ', quote)
+        let body = q[2]
       endif
     endif
-    let [text, tp] = s:MdInline(body)
-    call add(lines, lead . text)
-    if lead =~# '▎'
-      call add(props, [len(lines), 1, len(lead), 'vimzip_md_dim'])
-    endif
-    for p in tp
-      call add(props, [len(lines), len(lead) + p[0], p[1], p[2]])
-    endfor
+    let next = quote ? lead : repeat(' ', strwidth(lead))
+    let level = 0
     let i += 1
+    while i < n && !s:MdStops(a:src[i], quote)
+      let c = a:src[i]
+      " (Title / =====: the paragraph was a heading)
+      if !quote && empty(m) && empty(o) && c =~# '^\s\{,3}\%(=\+\|-\+\)\s*$'
+        let level = c =~# '=' ? 1 : 2
+        call add(map, len(lines) + 1)
+        let i += 1
+        break
+      endif
+      let c = quote ? substitute(c, '^\s*>\+\s\=', '', '') : c
+      let body .= (body =~# '\%(  \|\\\)$' ? "\n" : ' ') . substitute(c, '^\s\+', '', '')
+      call add(map, len(lines) + 1)
+      let i += 1
+    endwhile
+    let first = len(lines) + 1
+    for part in split(body, "\n", 1)
+      let [text, tp] = s:MdInline(trim(substitute(part, '\\$', '', ''), ' ', 2))
+      for [l, lp] in level ? [[text, tp]] : s:MdWrap(text, tp, max([10, width - strwidth(next)]))
+        let pre = len(lines) >= first ? next : lead
+        call add(lines, pre . l)
+        if pre =~# '▎'
+          call add(props, [len(lines), 1, len(pre), 'vimzip_md_dim'])
+        endif
+        for p in lp
+          call add(props, [len(lines), len(pre) + p[0], p[1], p[2]])
+        endfor
+      endfor
+    endfor
+    if level
+      call add(props, [first, 1, max([1, len(lines[first - 1])]), level == 1 ? 'vimzip_md_h1' : 'vimzip_md_h2'])
+      call add(lines, repeat(level == 1 ? '═' : '─', max([strwidth(lines[-1]), 3])))
+      call add(props, [len(lines), 1, len(lines[-1]), 'vimzip_md_dim'])
+    endif
   endwhile
   return [lines, props, map]
 endfunction
@@ -5138,6 +5240,8 @@ function! s:MdPreview() abort
   execute 'silent file' fnameescape('Preview ' . fnamemodify(bufname(src), ':t'))
   let b:vimzip_md_source = src
   call setbufvar(src, 'vimzip_md_preview', bufnr(''))
+  " (the last preview's pictures were let go with it)
+  call setbufvar(src, 'vimzip_md_imgs', {})
   call win_gotoid(from)
   call s:MdUpdate(src)
   augroup vimzip_md
@@ -5148,6 +5252,13 @@ function! s:MdPreview() abort
     autocmd BufUnload,BufDelete <buffer> call s:MdClose(str2nr(expand('<abuf>')))
   augroup END
 endfunction
+" (wrapped to its width: again when it changes)
+augroup vimzip_md_size
+  autocmd!
+  autocmd WinResized,VimResized * for s:w in gettabinfo(tabpagenr())[0].windows
+        \ | if getbufvar(winbufnr(s:w), '&filetype') ==# 'vimzipmdpreview' && getwinvar(s:w, 'vimzip_md_width') != winwidth(s:w)
+        \ | call setwinvar(s:w, 'vimzip_md_width', winwidth(s:w)) | call s:MdLater(getbufvar(winbufnr(s:w), 'vimzip_md_source')) | endif | endfor
+augroup END
 function! s:MdClose(src) abort
   let pv = getbufvar(a:src, 'vimzip_md_preview', -1)
   if bufexists(pv)
@@ -5163,7 +5274,19 @@ function! s:MdUpdate(src) abort
   if !bufexists(pv)
     return
   endif
-  let [lines, props, map] = s:MdRender(getbufline(a:src, 1, '$'), max([20, winwidth(bufwinid(pv)) - 1]))
+  let width = max([20, winwidth(bufwinid(pv)) - 1])
+  " (pictures of the file's folder drawn in it, as the image viewer draws them; each once, kept)
+  let s:md_ctx = {'src': a:src, 'dir': fnamemodify(bufname(a:src), ':p:h'), 'width': width,
+        \ 'kind': s:Pixels(pv), 'cache': getbufvar(a:src, 'vimzip_md_imgs', {}), 'pix': [], 'ids': []}
+  call setbufvar(a:src, 'vimzip_md_imgs', s:md_ctx.cache)
+  try
+    let [lines, props, map] = s:MdRender(getbufline(a:src, 1, '$'), width)
+  finally
+    let ctx = s:md_ctx
+    unlet s:md_ctx
+  endtry
+  call setbufvar(pv, 'vimzip_pix', ctx.kind ==# 'sixel' ? {'kind': 'sixel', 'items': ctx.pix}
+        \ : ctx.kind ==# 'kitty' ? {'kind': 'kitty', 'ids': ctx.ids} : {})
   call setbufvar(pv, '&modifiable', 1)
   silent call deletebufline(pv, 1, '$')
   call setbufline(pv, 1, lines)
@@ -5175,6 +5298,63 @@ function! s:MdUpdate(src) abort
   call setbufvar(pv, '&modifiable', 0)
   call setbufvar(a:src, 'vimzip_md_map', map)
   call s:MdFollow(a:src)
+  if !empty(ctx.pix) || s:pix_shown
+    call s:PixDraw(1)
+  endif
+endfunction
+" a picture in the preview: [lines, props, sixel] once drawn, else [] and drawn in the background
+" (the preview is made again when it is in)
+function! s:MdImage(path) abort
+  let c = s:md_ctx
+  let file = simplify(a:path =~# '^/' ? a:path : c.dir . '/' . a:path)
+  if a:path =~# '^\a\+:' || !filereadable(file) || file !~? '\.\(png\|jpe\=g\|gif\|webp\|bmp\|tiff\=\)$'
+    return []
+  endif
+  let size = [max([4, c.width - 2]), max([4, min([24, c.width / 4])])]
+  let key = join([file, getftime(file), c.kind] + size, '|')
+  let got = get(c.cache, key, 0)
+  if type(got) == v:t_list
+    return got
+  elseif got is 0 && executable(s:view)
+    let c.cache[key] = 1
+    let out = []
+    if c.kind !=# ''
+      let cell = s:CellPixels()
+      let cmd = [s:view, c.kind, file] + size + cell
+    else
+      let cmd = [s:view, 'image', file] + size + (&termguicolors ? [] : ['256'])
+    endif
+    let src = c.src
+    call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(out, 'error: ' . l)},
+          \ 'close_cb': {_ -> s:MdImageDone(src, key, c.kind, size, out)}})
+  endif
+  return []
+endfunction
+function! s:MdImageDone(src, key, kind, size, out) abort
+  let cache = getbufvar(a:src, 'vimzip_md_imgs', {})
+  if empty(a:out) || a:out[0] =~# '^error: ' || len(a:out) < 2
+    let cache[a:key] = ['failed']
+    return
+  endif
+  if a:kind ==# ''
+    let [rows, props] = s:BlockRows(a:out[1 :], a:size[0])
+    let cache[a:key] = [rows, props, {}]
+  else
+    let [cols, nrows] = map(split(a:out[0])[2 : 3], 'str2nr(v:val)')
+    let pad = max([0, (a:size[0] - cols) / 2]) + 1
+    if a:kind ==# 'kitty'
+      let s:kitty_next = get(s:, 'kitty_next', 0xB000) + 1
+      let id = s:kitty_next
+      call s:KittySend(id, a:out[1], cols, nrows)
+      let name = 'VimzipKitty' . id
+      call s:ImgGroup(name, printf('guifg=#%06x', id))
+      let rows = map(a:out[2 :], 'repeat(" ", pad) . v:val')
+      let cache[a:key] = [rows, map(range(len(rows)), '[v:val + 1, pad + 1, len(rows[v:val]) - pad, name]'), {'id': id}]
+    else
+      let cache[a:key] = [repeat([''], nrows), [], {'data': a:out[1 :], 'col': pad}]
+    endif
+  endif
+  call s:MdLater(a:src)
 endfunction
 " the preview scrolled to where the cursor is in the source
 function! s:MdFollow(src) abort

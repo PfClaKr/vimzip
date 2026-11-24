@@ -7,10 +7,10 @@ package main
 //	  (FILE - is the input)
 //	  the picture fitted into COLS x ROWS cells of CELLW x CELLH screen pixels (made smaller, never
 //	  larger). First line: "WIDTHxHEIGHT FORMAT C R", the picture's size and format and the cells it
-//	  takes. Then for sixel one line, a DCS sequence to write to the terminal as it is (xterm, foot,
-//	  WezTerm, Konsole, Windows Terminal, VTE built with sixel); for kitty a line with the PNG in
-//	  base64, then R lines of C placeholders (U+10EEEE with the marks of their row and column) to put
-//	  in the text, colored with the image's number (kitty, Ghostty)
+//	  takes. Then for sixel R lines, each a DCS sequence for one row of cells, to write to the
+//	  terminal as it is (xterm, foot, WezTerm, Konsole, Windows Terminal, VTE built with sixel); for
+//	  kitty a line with the PNG in base64, then R lines of C placeholders (U+10EEEE with the marks of
+//	  their row and column) to put in the text, colored with the image's number (kitty, Ghostty)
 
 import (
 	"bufio"
@@ -81,21 +81,30 @@ func pixels(kind, path string, cols, rows, cw, ch int) error {
 		}
 		return nil
 	}
-	sixel(out, img)
+	// a sixel for each row of cells, each on its line: vim draws the rows in view
+	pal := medianCut(img, 255)
+	idx := dither(img, pal)
+	for y := 0; y < oh; y += ch {
+		sixel(out, idx[y*ow:min(oh, y+ch)*ow], ow, min(ch, oh-y), pal)
+		out.WriteString("\n")
+	}
 	return nil
 }
 
 // ─── sixel ───────────────────────────────────────────────────────────────────────────────────────
 
-// up to 256 colors picked for the picture (median cut), the pixels dithered to them
-func sixel(out *bufio.Writer, img *image.NRGBA) {
-	w, h := img.Rect.Dx(), img.Rect.Dy()
-	pal := medianCut(img, 255)
-	idx := dither(img, pal)
-	// DCS P1=0 (square pixels) P2=1 (unset pixels stay as they were) q, the size, the palette
+// w x h pixels as indexes into up to 256 colors picked for the picture (median cut, dithered)
+func sixel(out *bufio.Writer, idx []uint8, w, h int, pal []color.NRGBA) {
+	// DCS P1=0 (square pixels) P2=1 (unset pixels stay as they were) q, the size, the colors used
 	fmt.Fprintf(out, "\x1bP0;1;0q\"1;1;%d;%d", w, h)
+	var seen [256]bool
+	for _, c := range idx {
+		seen[c] = true
+	}
 	for i, c := range pal {
-		fmt.Fprintf(out, "#%d;2;%d;%d;%d", i, int(c.R)*100/255, int(c.G)*100/255, int(c.B)*100/255)
+		if seen[i] {
+			fmt.Fprintf(out, "#%d;2;%d;%d;%d", i, int(c.R)*100/255, int(c.G)*100/255, int(c.B)*100/255)
+		}
 	}
 	masks := make([][]byte, len(pal))
 	for y0 := 0; y0 < h; y0 += 6 {
