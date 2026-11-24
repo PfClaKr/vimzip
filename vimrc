@@ -1574,8 +1574,8 @@ function! s:TermdebugLoad(cmd) abort
   packadd termdebug
   execute a:cmd
 endfunction
-command! -nargs=* -complete=file -bang Termdebug call s:TermdebugLoad('Termdebug<bang> ' . <q-args>)
-command! -nargs=+ -complete=file -bang TermdebugCommand call s:TermdebugLoad('TermdebugCommand<bang> ' . <q-args>)
+" (its commands, standing in until then, are made after ~/.config/vimzip/vimrc is read: one that
+" loads termdebug itself got E174 "Command already exists")
 
 " ─── tab bar and status bar ──────────────────────────────────────────────────────────────────────
 " lightline draws only the tab bar; the status bar is ours (below)
@@ -1791,6 +1791,9 @@ function! s:Head(b) abort
     return ''
   endif
   let f = dir . '/HEAD'
+  if !filereadable(f)
+    return ''
+  endif
   let stamp = [getftime(f), getfsize(f)]
   let known = get(s:heads, dir, [[], ''])
   if known[0] ==# stamp
@@ -4985,6 +4988,11 @@ nnoremap <silent> <leader>do :silent! Finish<CR>
 let s:blame_default = g:vimzip_blame
 if filereadable(expand('~/.config/vimzip/vimrc'))
   execute 'source' fnameescape(expand('~/.config/vimzip/vimrc'))
+endif
+" termdebug's commands until it is loaded (see "termdebug" above), unless the vimrc loaded it
+if exists(':Termdebug') != 2
+  command! -nargs=* -complete=file -bang Termdebug call s:TermdebugLoad('Termdebug<bang> ' . <q-args>)
+  command! -nargs=+ -complete=file -bang TermdebugCommand call s:TermdebugLoad('TermdebugCommand<bang> ' . <q-args>)
 endif
 
 " ─── light mode ─────────────────────────────────────────────────────────────────────────────────
