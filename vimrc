@@ -3318,6 +3318,14 @@ function! s:Format(saving) abort
     return
   endif
   if prog ==# ''
+    " (vim's reindent only where it knows the language's indent rules: without them it gave every
+    " line the one above's, a text file's indents all gone)
+    if &indentexpr ==# '' && !&cindent && !&lisp && &equalprg ==# ''
+      if !a:saving
+        call s:Say('No formatter for ' . (&filetype !=# '' ? &filetype : 'this file') . (has_key(s:formatters, &filetype) ? ' (install ' . join(s:formatters[&filetype], ' or ') . ')' : ''))
+      endif
+      return
+    endif
     let view = winsaveview()
     silent keepjumps normal! gg=G
     call winrestview(view)
