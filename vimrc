@@ -1566,10 +1566,12 @@ function! s:FastNERDTree() abort
 endfunction
 function! s:TreeGitUI() dict abort
   if mode() !=# 'n'
+    " (until back in normal mode: Esc after typing, or leaving the terminal; insert mode alone
+    " was waited for, and colors that came while in the terminal never showed)
     let s:tree_git_wait = self
     augroup vimzip_tree_git_later
       autocmd!
-      autocmd InsertLeave * ++once call timer_start(0, {-> s:tree_git_wait.TryUpdateNERDTreeUI()})
+      autocmd ModeChanged *:n* ++once call timer_start(0, {-> s:tree_git_wait.TryUpdateNERDTreeUI()})
     augroup END
     return
   endif
@@ -2353,7 +2355,9 @@ augroup vimzip_treesync
   autocmd CursorHold,FocusGained * call s:TreeSync()
   autocmd BufWritePost * call timer_start(0, function('s:TreeSync'))
   autocmd WinLeave * let s:from_term = &buftype ==# 'terminal'
-  autocmd WinEnter * if get(s:, 'from_term', 0) | call timer_start(50, function('s:TreeSync')) | endif
+  " (back from a terminal, where files may have been changed: their git colors asked for again,
+  " not after up to 30 s)
+  autocmd WinEnter * if get(s:, 'from_term', 0) | let s:tree_git_at = 0 | call timer_start(50, function('s:TreeSync')) | endif
 augroup END
 
 " keep the open tree pointed at the current file, like VSCode's explorer (focus stays in the editor)
@@ -5125,6 +5129,12 @@ function! s:GitRecheck() abort
   endif
   if exists('g:loaded_gitgutter') && g:gitgutter_enabled
     call gitgutter#all(1)
+  endif
+  " the whole tree read again and its git colors asked for: going by the folders' times missed
+  " those changed in the second they were last looked at, and a folder shut at the time
+  if exists('g:NERDTree') && g:NERDTree.IsOpen()
+    call win_execute(win_getid(g:NERDTree.GetWinNum()), 'call b:NERDTree.root.refresh() | call b:NERDTree.render()')
+    silent! doautocmd <nomodeline> User FugitiveChanged
   endif
 endfunction
 function! s:GitPanel(what) abort
