@@ -3897,8 +3897,9 @@ function! s:Replace(text) abort
   endif
   redraw
   call s:QuietWrite('wall')
-  " (the files the search looks in: hidden ones too, not .git; long lines shown in part)
-  let out = systemlist('rg -n -H --no-heading --color=never --fixed-strings --case-sensitive --hidden --glob "!.git" -- '
+  " (the files the search looks in: hidden ones too, not .git, in order of their paths; long lines
+  " shown in part)
+  let out = systemlist('rg -n -H --no-heading --color=never --fixed-strings --case-sensitive --hidden --glob "!.git" --sort path -- '
         \ . shellescape(find) . ' .')
   let matches = []
   for l in out
