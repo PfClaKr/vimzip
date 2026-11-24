@@ -451,6 +451,13 @@ autocmd BufReadPost /usr/* setlocal readonly nomodifiable
 " CMake Tools does. Other projects without one get their folders with headers as include paths.
 " g:vimzip_cmake = 0 turns both off.
 let s:cmake = {}
+" the build folder vimzip makes for a project: named by the folder and a hash of its path, without
+" the % the other cache files use for /, which ALE reads in a command (%s the file, %e, %t): clangd
+" was given a path with the file's name in it and found no headers, in any project under a folder
+" starting with s, e or t (src/, tools/...)
+function! s:CMakeDir(root) abort
+  return s:cache . '/cmake/' . substitute(fnamemodify(a:root, ':t'), '[^A-Za-z0-9._-]', '_', 'g') . '-' . sha256(a:root)[: 11]
+endfunction
 let s:cmake_later = []  " (files opened while vim starts: looked at once it has, see s:Started)
 function! s:CMakeRoot(file) abort
   " the topmost folder with a CMakeLists.txt, up to the git work tree's root
@@ -489,7 +496,7 @@ function! s:CMake(buf) abort
     if root ==# '' || root ==# expand('~')
       return
     endif
-    let dir = s:cache . '/cmake/' . s:CacheName(root, '')
+    let dir = s:CMakeDir(root)
     if filereadable(dir . '/compile_commands.json')
       call s:CMakeUse(a:buf, dir)
     endif
@@ -498,7 +505,7 @@ function! s:CMake(buf) abort
     endif
     return
   endif
-  let dir = s:cache . '/cmake/' . s:CacheName(root, '')
+  let dir = s:CMakeDir(root)
   if filereadable(dir . '/compile_commands.json')
     call s:CMakeUse(a:buf, dir)
   endif
@@ -658,7 +665,7 @@ endfunction
 " (again for a project vimzip configured, not one with a compile_commands.json of its own)
 function! s:CMakeSaved(file) abort
   let root = s:CMakeRoot(a:file)
-  let dir = s:cache . '/cmake/' . s:CacheName(root, '')
+  let dir = s:CMakeDir(root)
   if root !=# '' && get(g:, 'vimzip_cmake', 1) && filereadable(dir . '/CMakeCache.txt')
     call s:CMakeConfigure(root, dir)
   endif
@@ -669,7 +676,7 @@ function! s:CMakeHere() abort
     echo 'No CMakeLists.txt above this file'
     return
   endif
-  call s:CMakeConfigure(root, s:cache . '/cmake/' . s:CacheName(root, ''))
+  call s:CMakeConfigure(root, s:CMakeDir(root))
   call s:Say('CMake: configuring ' . fnamemodify(root, ':~') . ' for its include paths...')
 endfunction
 command! -bar CMake call s:CMakeHere()
@@ -810,7 +817,7 @@ endfunction
 " (the project's own build, if it keeps one with a compile_commands.json)
 function! s:CMakeBuildDir(buffer) abort
   let own = exists('g:loaded_ale') ? ale#c#FindCompileCommands(a:buffer)[1] : ''
-  return own !=# '' ? fnamemodify(own, ':h') : s:cache . '/cmake/' . s:CacheName(s:CMakeLspRoot(a:buffer), '')
+  return own !=# '' ? fnamemodify(own, ':h') : s:CMakeDir(s:CMakeLspRoot(a:buffer))
 endfunction
 " (made known to ALE when a CMake file first opens: at start, loading ALE's linter code took 1.4 ms)
 function! s:CMakeLsp() abort
