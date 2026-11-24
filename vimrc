@@ -3018,7 +3018,7 @@ function! s:ViewHeader(buf, info) abort
         \ kb >= 1024 ? printf('%.1f MB', kb / 1024.0) : max([kb, 1]) . ' KB')
 endfunction
 " pictures in real pixels where the terminal can draw them (g:vimzip_images: 'auto', or 'sixel',
-" 'kitty', 'blocks'): kitty and Ghostty by kitty's own way, the terminals that tell vim they draw
+" 'kitty', 'octants', 'blocks'): kitty and Ghostty by kitty's own way, the terminals that tell vim they draw
 " sixel (Windows Terminal, Konsole, WezTerm, foot, xterm, VTE built with it) by sixel; not inside
 " tmux. Elsewhere half blocks, two pixels a cell.
 function! s:Pixels(buf) abort
@@ -3034,6 +3034,13 @@ function! s:Pixels(buf) abort
   endif
   " (the answer to vim's question at start, DA1: 4 among its numbers is sixel)
   return v:termda1 =~# '[?;]4[;c]' ? 'sixel' : ''
+endfunction
+" without pixels, a cell split in 2 x 4 parts (the octants of Unicode 16) where the terminal draws
+" those characters itself, as VTE does (GNOME Terminal, Terminator...): four times finer than half
+" blocks. g:vimzip_images = 'octants' for others whose font has them.
+function! s:Octants() abort
+  let want = get(g:, 'vimzip_images', 'auto')
+  return want ==# 'octants' || want ==# 'auto' && str2nr($VTE_VERSION) >= 7800
 endfunction
 " a cell's size in screen pixels: the terminal's, or g:vimzip_cell_pixels
 function! s:CellPixels() abort
@@ -3087,7 +3094,7 @@ function! s:ImgRender(buf) abort
     let cmd = [s:view, kind, s:ViewFile(a:buf), size[0], size[1], cell[0], cell[1]]
     let Done = {-> s:PixShow(a:buf, out, key)}
   else
-    let cmd = [s:view, 'image', s:ViewFile(a:buf), size[0], size[1]] + (&termguicolors ? [] : ['256'])
+    let cmd = [s:view, s:Octants() ? 'cells' : 'image', s:ViewFile(a:buf), size[0], size[1]] + (&termguicolors ? [] : ['256'])
     let Done = {-> s:ImgShow(a:buf, out, size)}
   endif
   call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(out, 'error: ' . l)},
@@ -3119,15 +3126,18 @@ function! s:BlockRows(rows, width) abort
     let runs = map(split(row), 'split(v:val, ":")')
     let width = eval(join(map(copy(runs), 'v:val[0]'), '+'))
     let text = repeat(' ', max([0, (a:width - width) / 2]) + 1)
-    for [n, top, bottom] in runs
+    for run in runs
+      " (half blocks: the upper half in the first color; octants: the character says which parts)
+      let [n, top, bottom] = run[: 2]
+      let ch = len(run) > 3 ? nr2char(str2nr(run[3], 16)) : '▀'
       " a group per color, not per pair of them (vim has room for about 20000 groups): one
       " property gives the upper half's color, another the lower's, and vim combines the two
       for [name, hl] in [['VimzipImgF_' . top, (gui ? 'guifg=#' : 'ctermfg=') . top],
             \            ['VimzipImgB_' . bottom, (gui ? 'guibg=#' : 'ctermbg=') . bottom]]
         call s:ImgGroup(name, hl)
-        call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * 3, name])
+        call add(props, [len(lines) + 1, len(text) + 1, str2nr(n) * len(ch), name])
       endfor
-      let text .= repeat('▀', str2nr(n))
+      let text .= repeat(ch, str2nr(n))
     endfor
     call add(lines, text)
   endfor
@@ -5378,7 +5388,7 @@ function! s:MdImage(path) abort
       let cell = s:CellPixels()
       let cmd = [s:view, c.kind, file] + size + cell
     else
-      let cmd = [s:view, 'image', file] + size + (&termguicolors ? [] : ['256'])
+      let cmd = [s:view, s:Octants() ? 'cells' : 'image', file] + size + (&termguicolors ? [] : ['256'])
     endif
     let src = c.src
     call job_start(cmd, {'out_cb': {_, l -> add(out, l)}, 'err_cb': {_, l -> add(out, 'error: ' . l)},
