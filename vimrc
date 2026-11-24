@@ -1944,7 +1944,7 @@ endfunction
 function! s:NotSaved(b) abort
   let name = bufname(a:b)
   if name ==# ''
-    call s:Say('No write since last change (:w name to save, :q! to discard)', 'ErrorMsg')
+    call s:Say('No write since last change (Ctrl+s to save, :q! to discard)', 'ErrorMsg')
   elseif getbufvar(a:b, '&readonly') || !filewritable(name) && filereadable(name)
     call s:Say(fnamemodify(name, ':t') . ' is read-only: changes not saved (:w! to save anyway, :q! to discard)', 'ErrorMsg')
   else
