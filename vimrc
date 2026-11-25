@@ -2295,7 +2295,7 @@ function! s:Equalize() abort
   wincmd =
   call s:Layout()
 endfunction
-nnoremap <silent> <C-w>= :call <SID>Equalize()<CR>
+nnoremap <silent> <C-w>= :<C-u>call <SID>Equalize()<CR>
 
 " ─── tree sync, completion, terminals ────────────────────────────────────────────────────────────
 " files created or removed outside vim (in the terminal, by git or a build) show up in the tree by
@@ -3436,47 +3436,47 @@ augroup END
 " Ctrl+ combinations, and Space + a letter per group (f find, g git, c code, t terminal, d debug)
 
 " find: Space f
-nnoremap <silent> <C-p> :call <SID>Buf('Files')<CR>
-nnoremap <silent> <C-S-f> :call <SID>Buf('Find')<CR>
+nnoremap <silent> <C-p> :<C-u>call <SID>Buf('Files')<CR>
+nnoremap <silent> <C-S-f> :<C-u>call <SID>Buf('Find')<CR>
 xnoremap <silent> <C-S-f> <Esc>:call <SID>FindText(<SID>Selection())<CR>
-nnoremap <silent> <leader>ff :call <SID>Buf('Files')<CR>
-nnoremap <silent> <leader>fs :call <SID>Buf('Find')<CR>
+nnoremap <silent> <leader>ff :<C-u>call <SID>Buf('Files')<CR>
+nnoremap <silent> <leader>fs :<C-u>call <SID>Buf('Find')<CR>
 xnoremap <silent> <leader>fs <Esc>:call <SID>FindText(<SID>Selection())<CR>
-nnoremap <silent> <leader>fw :call <SID>FindText(expand('<cword>'))<CR>
+nnoremap <silent> <leader>fw :<C-u>call <SID>FindText(expand('<cword>'))<CR>
 xnoremap <silent> <leader>fw <Esc>:call <SID>FindText(<SID>Selection())<CR>
-nnoremap <silent> <leader>fb :call <SID>Buf('Buffers')<CR>
-nnoremap <silent> <leader>fr :call <SID>Buf('History')<CR>
-nnoremap <silent> <leader>fp :call <SID>PickProject()<CR>
+nnoremap <silent> <leader>fb :<C-u>call <SID>Buf('Buffers')<CR>
+nnoremap <silent> <leader>fr :<C-u>call <SID>Buf('History')<CR>
+nnoremap <silent> <leader>fp :<C-u>call <SID>PickProject()<CR>
 function! s:Selection() abort
   return join(getregion(getpos("'<"), getpos("'>"), {'type': visualmode()}), "\n")
 endfunction
 
 " tabs and files
-nnoremap <silent> <Tab> :call <SID>Buf('bnext')<CR>
-nnoremap <silent> <S-Tab> :call <SID>Buf('bprevious')<CR>
-nnoremap <silent> <leader>q :call <SID>CloseBuf()<CR>
-nnoremap <silent> <C-s> :call <SID>Save()<CR>
+nnoremap <silent> <Tab> :<C-u>call <SID>Buf('bnext')<CR>
+nnoremap <silent> <S-Tab> :<C-u>call <SID>Buf('bprevious')<CR>
+nnoremap <silent> <leader>q :<C-u>call <SID>CloseBuf()<CR>
+nnoremap <silent> <C-s> :<C-u>call <SID>Save()<CR>
 inoremap <silent> <C-s> <C-o>:call <SID>Save()<CR>
 xnoremap <silent> <C-s> <Esc>:call <SID>Save()<CR>
 xnoremap <C-c> y
 
 " panels: Space e explorer, Space o outline, Space a AI agent (and VSCode's keys)
-nnoremap <silent> <F2> :call <SID>Explorer()<CR>
-nnoremap <silent> <C-S-e> :call <SID>Explorer()<CR>
+nnoremap <silent> <F2> :<C-u>call <SID>Explorer()<CR>
+nnoremap <silent> <C-S-e> :<C-u>call <SID>Explorer()<CR>
 tnoremap <silent> <C-S-e> <C-w>:call <SID>Explorer()<CR>
-nnoremap <silent> <leader>e :call <SID>Explorer()<CR>
-nnoremap <silent> <F3> :call <SID>Outline()<CR>
-nnoremap <silent> <leader>o :call <SID>Outline()<CR>
-nnoremap <silent> <C-M-i> :call <SID>ToggleAi()<CR>
+nnoremap <silent> <leader>e :<C-u>call <SID>Explorer()<CR>
+nnoremap <silent> <F3> :<C-u>call <SID>Outline()<CR>
+nnoremap <silent> <leader>o :<C-u>call <SID>Outline()<CR>
+nnoremap <silent> <C-M-i> :<C-u>call <SID>ToggleAi()<CR>
 tnoremap <silent> <C-M-i> <C-w>:call <SID>ToggleAi()<CR>
-nnoremap <silent> <leader>a :call <SID>ToggleAi()<CR>
+nnoremap <silent> <leader>a :<C-u>call <SID>ToggleAi()<CR>
 
 " terminal: Space t; inside a terminal Ctrl+w s / v open another one below / beside (like windows)
-nnoremap <silent> <F4> :call <SID>ToggleTerm()<CR>
+nnoremap <silent> <F4> :<C-u>call <SID>ToggleTerm()<CR>
 tnoremap <silent> <F4> <C-w>:call <SID>ToggleTerm()<CR>
-nnoremap <silent> <leader>tt :call <SID>ToggleTerm()<CR>
-nnoremap <silent> <leader>ts :call <SID>NewTerm(0)<CR>
-nnoremap <silent> <leader>tv :call <SID>NewTerm(1)<CR>
+nnoremap <silent> <leader>tt :<C-u>call <SID>ToggleTerm()<CR>
+nnoremap <silent> <leader>ts :<C-u>call <SID>NewTerm(0)<CR>
+nnoremap <silent> <leader>tv :<C-u>call <SID>NewTerm(1)<CR>
 tnoremap <silent> <C-w>s <C-w>:call <SID>NewTerm(0)<CR>
 tnoremap <silent> <C-w>v <C-w>:call <SID>NewTerm(1)<CR>
 
@@ -3628,14 +3628,14 @@ function! s:OpenAtCursor() abort
     call s:LinkOpen(link)
   endif
 endfunction
-nnoremap <silent> <C-LeftMouse> :call <SID>CtrlClick()<CR>
+nnoremap <silent> <C-LeftMouse> :<C-u>call <SID>CtrlClick()<CR>
 inoremap <silent> <C-LeftMouse> <C-o>:call <SID>CtrlClick()<CR>
 tnoremap <silent> <C-LeftMouse> <C-w>:call <SID>CtrlClick()<CR>
-nnoremap <silent> gx :call <SID>OpenAtCursor()<CR>
+nnoremap <silent> gx :<C-u>call <SID>OpenAtCursor()<CR>
 
 " code: vim's gd / gr / K / ]e [e, VSCode's F12, Space c for the rest
-nnoremap <silent> <F12> :call <SID>GoDef()<CR>
-nnoremap <silent> gd :call <SID>GoDef()<CR>
+nnoremap <silent> <F12> :<C-u>call <SID>GoDef()<CR>
+nnoremap <silent> gd :<C-u>call <SID>GoDef()<CR>
 " :Man page (K without a language server)
 if executable('man')
   runtime ftplugin/man.vim
@@ -3665,8 +3665,8 @@ function! s:Docs() abort
     echo 'No documentation: a language server (:Lsp) or man is needed'
   endif
 endfunction
-nnoremap <silent> gr :call <SID>Refs()<CR>
-nnoremap <silent> K :call <SID>Docs()<CR>
+nnoremap <silent> gr :<C-u>call <SID>Refs()<CR>
+nnoremap <silent> K :<C-u>call <SID>Docs()<CR>
 nmap ]e <Plug>(ale_next_wrap)
 nmap [e <Plug>(ale_previous_wrap)
 " (on a line without one: a word saying so, not nothing at all)
@@ -3677,7 +3677,7 @@ function! s:ErrorDetail() abort
     ALEDetail
   endif
 endfunction
-nnoremap <silent> <leader>ce :call <SID>ErrorDetail()<CR>
+nnoremap <silent> <leader>ce :<C-u>call <SID>ErrorDetail()<CR>
 nnoremap <silent> <leader>cl :Lsp<CR>
 
 " a message on one line, cut to the screen's width (a longer one stopped everything at "Press
@@ -4503,24 +4503,24 @@ function! s:ReplaceApply() abort
   call s:Say(printf('Replaced %d in %s', done, s:Count(files, 'file')))
 endfunction
 
-nnoremap <silent> <leader>cr :call <SID>Rename()<CR>
-nnoremap <silent> <leader>cf :call <SID>Format(0)<CR>
-nnoremap <silent> <leader>ca :call <SID>CodeAction()<CR>
-nnoremap <silent> <C-.> :call <SID>CodeAction()<CR>
-nnoremap <silent> <leader>cp :call <SID>Problems()<CR>
-nnoremap <silent> <leader>cb :call <SID>Build()<CR>
-nnoremap <silent> <C-S-b> :call <SID>Build()<CR>
-nnoremap <silent> <leader>fc :call <SID>Replace(expand('<cword>'))<CR>
+nnoremap <silent> <leader>cr :<C-u>call <SID>Rename()<CR>
+nnoremap <silent> <leader>cf :<C-u>call <SID>Format(0)<CR>
+nnoremap <silent> <leader>ca :<C-u>call <SID>CodeAction()<CR>
+nnoremap <silent> <C-.> :<C-u>call <SID>CodeAction()<CR>
+nnoremap <silent> <leader>cp :<C-u>call <SID>Problems()<CR>
+nnoremap <silent> <leader>cb :<C-u>call <SID>Build()<CR>
+nnoremap <silent> <C-S-b> :<C-u>call <SID>Build()<CR>
+nnoremap <silent> <leader>fc :<C-u>call <SID>Replace(expand('<cword>'))<CR>
 xnoremap <silent> <leader>fc <Esc>:call <SID>Replace(<SID>Selection())<CR>
-nnoremap <silent> <C-S-h> :call <SID>Replace(expand('<cword>'))<CR>
+nnoremap <silent> <C-S-h> :<C-u>call <SID>Replace(expand('<cword>'))<CR>
 xnoremap <silent> <C-S-h> <Esc>:call <SID>Replace(<SID>Selection())<CR>
 nnoremap <silent> <C-n> :<C-u>call <SID>MultiAdd(0)<CR>
 xnoremap <silent> <C-n> <Esc>:call <SID>MultiAdd(1)<CR>
-nnoremap <silent> <leader>mc :call <SID>Resolve('current')<CR>
-nnoremap <silent> <leader>mi :call <SID>Resolve('incoming')<CR>
-nnoremap <silent> <leader>mb :call <SID>Resolve('both')<CR>
-nnoremap <silent> ]x :call <SID>NextConflict(0)<CR>
-nnoremap <silent> [x :call <SID>NextConflict(1)<CR>
+nnoremap <silent> <leader>mc :<C-u>call <SID>Resolve('current')<CR>
+nnoremap <silent> <leader>mi :<C-u>call <SID>Resolve('incoming')<CR>
+nnoremap <silent> <leader>mb :<C-u>call <SID>Resolve('both')<CR>
+nnoremap <silent> ]x :<C-u>call <SID>NextConflict(0)<CR>
+nnoremap <silent> [x :<C-u>call <SID>NextConflict(1)<CR>
 
 " ─── typing and reading aids ─────────────────────────────────────────────────────────────────────
 " brackets and quotes close themselves (VSCode's auto closing pairs): ( gives (), typing ) before a
@@ -5665,15 +5665,15 @@ function! s:MdFollow(src) abort
   call win_execute(w, 'call cursor(' . l . ', 1) | normal! zz')
 endfunction
 
-nnoremap <silent> <M-F12> :call <SID>Peek()<CR>
-nnoremap <silent> <leader>cd :call <SID>Peek()<CR>
-nnoremap <silent> <leader>ft :call <SID>Buf('Tags')<CR>
-nnoremap <silent> <leader>fS :call <SID>Symbols()<CR>
-nnoremap <silent> <leader>go :call <SID>Branches()<CR>
-nnoremap <silent> <leader>gP :call <SID>GitPanel('push')<CR>
-nnoremap <silent> <leader>gF :call <SID>GitPanel('pull')<CR>
-nnoremap <silent> <leader>cv :call <SID>MdPreview()<CR>
-nnoremap <silent> <C-S-v> :call <SID>MdPreview()<CR>
+nnoremap <silent> <M-F12> :<C-u>call <SID>Peek()<CR>
+nnoremap <silent> <leader>cd :<C-u>call <SID>Peek()<CR>
+nnoremap <silent> <leader>ft :<C-u>call <SID>Buf('Tags')<CR>
+nnoremap <silent> <leader>fS :<C-u>call <SID>Symbols()<CR>
+nnoremap <silent> <leader>go :<C-u>call <SID>Branches()<CR>
+nnoremap <silent> <leader>gP :<C-u>call <SID>GitPanel('push')<CR>
+nnoremap <silent> <leader>gF :<C-u>call <SID>GitPanel('pull')<CR>
+nnoremap <silent> <leader>cv :<C-u>call <SID>MdPreview()<CR>
+nnoremap <silent> <C-S-v> :<C-u>call <SID>MdPreview()<CR>
 
 " git: Space g; ]c / [c move between changes (vim's keys for that in a diff)
 " outside a git repository: one line saying so (Space gd stopped at a press-ENTER error)
@@ -5700,14 +5700,14 @@ function! s:GitRun(cmd, ...) abort
   endif
   execute a:cmd
 endfunction
-nnoremap <silent> <leader>gs :call <SID>EditWin()<Bar>call <SID>GitRun('Git')<CR>
-nnoremap <silent> <leader>gc :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>CommitPopup()', 1)<CR>
-nnoremap <silent> <leader>gb :call <SID>EditWin()<Bar>let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
-nnoremap <silent> <leader>gB :call <SID>EditWin()<Bar>call <SID>GitRun('Git blame', 1)<CR>
-nnoremap <silent> <leader>gh :call <SID>EditWin()<Bar>GV!<CR>
+nnoremap <silent> <leader>gs :<C-u>call <SID>EditWin()<Bar>call <SID>GitRun('Git')<CR>
+nnoremap <silent> <leader>gc :<C-u>call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>CommitPopup()', 1)<CR>
+nnoremap <silent> <leader>gb :<C-u>call <SID>EditWin()<Bar>let g:vimzip_blame = !g:vimzip_blame <Bar> call <SID>Blame()<CR>
+nnoremap <silent> <leader>gB :<C-u>call <SID>EditWin()<Bar>call <SID>GitRun('Git blame', 1)<CR>
+nnoremap <silent> <leader>gh :<C-u>call <SID>EditWin()<Bar>GV!<CR>
 xnoremap <silent> <leader>gh :GV<CR>
-nnoremap <silent> <leader>gl :call <SID>EditWin()<Bar>GV<CR>
-nnoremap <silent> <leader>gt :call <SID>ToggleTimeline()<CR>
+nnoremap <silent> <leader>gl :<C-u>call <SID>EditWin()<Bar>GV<CR>
+nnoremap <silent> <leader>gt :<C-u>call <SID>ToggleTimeline()<CR>
 " side by side, or one above the other when the window is too narrow for two
 function! s:DiffSplit(mods, rev) abort
   try
@@ -5721,7 +5721,7 @@ function! s:DiffSplit(mods, rev) abort
     echohl WarningMsg | echo 'No room to compare: close a panel or split' | echohl None
   endtry
 endfunction
-nnoremap <silent> <leader>gd :call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>DiffSplit("", "")', 1)<CR>
+nnoremap <silent> <leader>gd :<C-u>call <SID>EditWin()<Bar>call <SID>GitRun('call <SID>DiffSplit("", "")', 1)<CR>
 nmap <silent> <leader>gp :call <SID>EditWin()<CR><Plug>(GitGutterPreviewHunk)
 nmap <silent> <leader>ga :call <SID>EditWin()<CR><Plug>(GitGutterStageHunk)
 nmap <silent> <leader>gu :call <SID>EditWin()<CR><Plug>(GitGutterUndoHunk)
@@ -5729,20 +5729,22 @@ nmap <silent> <expr> ]c &diff ? ']c' : '<Plug>(GitGutterNextHunk)'
 nmap <silent> <expr> [c &diff ? '[c' : '<Plug>(GitGutterPrevHunk)'
 
 " Space ?: every key on one page (autoload/vimzip/keys.vim)
-nnoremap <silent> <leader>? :call vimzip#keys#show()<CR>
+nnoremap <silent> <leader>? :<C-u>call vimzip#keys#show()<CR>
 " F1 (vim's opens its own manual): the keys too
-nnoremap <silent> <F1> :call vimzip#keys#show()<CR>
+nnoremap <silent> <F1> :<C-u>call vimzip#keys#show()<CR>
 inoremap <silent> <F1> <C-o>:call vimzip#keys#show()<CR>
 " Space held (nothing typed after it for a moment): a menu of what can follow, as VSCode users
 " look for one; quicker than vim's second to wait
 set timeoutlen=800
-nnoremap <silent> <leader> :call vimzip#keys#menu()<CR>
+nnoremap <silent> <leader> :<C-u>call vimzip#keys#menu()<CR>
 
 " the first start: what to try first and where the keys are, once (the first key typed closes it
 " and does its job)
 function! s:Welcome() abort
   let mark = s:cache . '/welcomed'
-  if filereadable(mark) || &diff || get(g:, 'vimzip_welcome', 1) == 0
+  " (nor over a commit message or a file another program opened: the next start shows it)
+  if filereadable(mark) || &diff || get(g:, 'vimzip_welcome', 1) == 0 || &filetype =~# '^git'
+        \ || argc() > 0 && !isdirectory(argv(0))
     return
   endif
   silent! call mkdir(s:cache, 'p')
@@ -5855,15 +5857,15 @@ augroup vimzip_debug
   autocmd!
   autocmd User TermdebugStartPost call s:DebugStarted()
 augroup END
-nnoremap <silent> <F5> :call <SID>Debug()<CR>
-nnoremap <silent> <F9> :call <SID>ToggleBreak()<CR>
+nnoremap <silent> <F5> :<C-u>call <SID>Debug()<CR>
+nnoremap <silent> <F9> :<C-u>call <SID>ToggleBreak()<CR>
 inoremap <silent> <F9> <C-o>:call <SID>ToggleBreak()<CR>
 nnoremap <silent> <F10> :silent! Over<CR>
 nnoremap <silent> <F11> :silent! Step<CR>
 nnoremap <silent> <S-F11> :silent! Finish<CR>
 " the same on Space d, for terminals that keep the F-keys for themselves
-nnoremap <silent> <leader>dd :call <SID>Debug()<CR>
-nnoremap <silent> <leader>db :call <SID>ToggleBreak()<CR>
+nnoremap <silent> <leader>dd :<C-u>call <SID>Debug()<CR>
+nnoremap <silent> <leader>db :<C-u>call <SID>ToggleBreak()<CR>
 nnoremap <silent> <leader>dn :silent! Over<CR>
 nnoremap <silent> <leader>di :silent! Step<CR>
 nnoremap <silent> <leader>do :silent! Finish<CR>

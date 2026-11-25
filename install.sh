@@ -47,6 +47,10 @@ unlink_all() {
 
 if [ "$ask" = uninstall ]; then
   unlink_all
+  # (and the programs of yours install.sh set aside, back)
+  for n in vim vi view vimdiff vimzip; do
+    if [ -e "$BIN/$n.before-vimzip" ] && [ ! -e "$BIN/$n" ]; then mv "$BIN/$n.before-vimzip" "$BIN/$n"; fi
+  done
   unrc
   echo "vimzip: uninstalled (links and $rc lines). Left: $D, $CONF, ~/.cache/vimzip"
   exit 0
@@ -113,10 +117,18 @@ choose ai "The AI agent for Space a" auto \
 # the links
 mkdir -p "$BIN"
 unlink_all
+# (a program of yours by that name, not a link: kept beside it, not overwritten)
+link() {
+  if [ -e "$BIN/$1" ] && [ ! -L "$BIN/$1" ]; then
+    mv "$BIN/$1" "$BIN/$1.before-vimzip"
+    echo "vimzip: your $BIN/$1 is now $BIN/$1.before-vimzip"
+  fi
+  ln -sf "$D/vim" "$BIN/$1"
+}
 if [ "$name" = vim ]; then
-  for n in vim vi view vimdiff; do ln -sf "$D/vim" "$BIN/$n"; done
+  for n in vim vi view vimdiff; do link "$n"; done
 else
-  ln -sf "$D/vim" "$BIN/vimzip"
+  link vimzip
 fi
 
 # the shell: PATH where it is not yet, and EDITOR

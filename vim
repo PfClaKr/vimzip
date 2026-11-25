@@ -21,4 +21,10 @@ if [ -z "$m" ] && [ -t 0 ] && [ -t 1 ] && [ -z "$TMUX$STY" ]; then
   fi
 fi
 [ "$m" = 1 ] || m=0
+# started as vimdiff or view (install.sh links them): vim tells those apart by its own name, which
+# here is bin/vim, so the comparison or the read-only view is asked for
+case ${0##*/} in
+  vimdiff) set -- -d "$@" ;;
+  view) set -- -R "$@" ;;
+esac
 exec "$D/bin/vim" -u "$D/vimrc" --cmd "let g:vimzip_decslrm = $m" "$@"
