@@ -13,7 +13,17 @@ curl -fsSL https://github.com/PfClaKr/vimzip/releases/latest/download/vimzip-lin
 source ~/.bashrc    # or ~/.zshrc
 ```
 
-This unpacks to `~/vimzip`, links `~/.local/bin/vim` and sets `EDITOR=vim`.
+This unpacks to `~/vimzip` and asks a few things (Enter keeps the usual choice):
+
+- start it as `vim` (in place of vim for you: `vim`, `vi`, `view`, `vimdiff`), or as `vimzip`
+  with your vim left as it is
+- whether git and other programs open it (`EDITOR`, `VISUAL`)
+- the status bar's theme, closing brackets as you type, formatting on save, line blame, and the AI
+  agent for `Space a`
+
+The answers go to `~/.config/vimzip/vimrc` (change them there, or run `install.sh` again) and
+your shell's rc file (bash, zsh or fish). `install.sh --yes` takes the usual choices without
+asking.
 
 ## Use
 
@@ -110,7 +120,7 @@ this off.
 
 ```sh
 rm -rf ~/vimzip && curl -fsSL https://github.com/PfClaKr/vimzip/releases/latest/download/vimzip-linux-x86_64.tar.gz | tar -xz -C ~
-rm -rf ~/vimzip ~/.local/bin/vim ~/.cache/vimzip    # uninstall; also remove the '# vimzip' lines from ~/.bashrc
+~/vimzip/install.sh --uninstall && rm -rf ~/vimzip ~/.cache/vimzip ~/.config/vimzip    # uninstall
 ```
 
 Undo history, sessions and tags live in `~/.cache/vimzip`. Entries unused for 90 days (tags, words)
