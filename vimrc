@@ -5736,13 +5736,15 @@ inoremap <silent> <F1> <C-o>:call vimzip#keys#show()<CR>
 " Space held (nothing typed after it for a moment): a menu of what can follow, as VSCode users
 " look for one; quicker than vim's second to wait
 set timeoutlen=800
-nnoremap <silent> <leader> :call vimzip#keys#menu()<CR>
+nnoremap <silent> <leader> :<C-u>call vimzip#keys#menu()<CR>
 
 " the first start: what to try first and where the keys are, once (the first key typed closes it
 " and does its job)
 function! s:Welcome() abort
   let mark = s:cache . '/welcomed'
-  if filereadable(mark) || &diff || get(g:, 'vimzip_welcome', 1) == 0
+  " (nor over a commit message or a file another program opened: the next start shows it)
+  if filereadable(mark) || &diff || get(g:, 'vimzip_welcome', 1) == 0 || &filetype =~# '^git'
+        \ || argc() > 0 && !isdirectory(argv(0))
     return
   endif
   silent! call mkdir(s:cache, 'p')
