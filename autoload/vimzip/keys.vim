@@ -698,6 +698,9 @@ function! s:MenuKey(id, key) abort
     call feedkeys("\<Space>" . seq, 'm')
   elseif s:menu_prefix ==# '' && !empty(s:LeaderKeys(seq))
     call vimzip#keys#menu(seq)
+  else
+    " (a key that is no Space key: the menu goes, the key does its usual job, : a command)
+    return 0
   endif
   return 1
 endfunction
