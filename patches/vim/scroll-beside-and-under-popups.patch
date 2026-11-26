@@ -21,13 +21,14 @@ index 7688429..3d8bde0 100644
  #ifdef FEAT_SYN_HL
      // Now that the window has been redrawn with the old and new cursor line,
 diff --git a/src/screen.c b/src/screen.c
-index 70e3610..e66699c 100644
+index 70e3610..6a2a4e7 100644
 --- a/src/screen.c
 +++ b/src/screen.c
-@@ -4236,6 +4236,277 @@ win_del_lines(
+@@ -4236,6 +4236,266 @@ win_del_lines(
      return OK;
  }
  
++#ifdef FEAT_PROP_POPUP
 +/*
 + * Return TRUE when the cell at "row" / "col" shows the text of window "wp":
 + * it is in the window's columns and not under a popup.
@@ -92,14 +93,12 @@ index 70e3610..e66699c 100644
 +
 +/*
 + * Delete ("del" TRUE) or insert "line_count" lines at screen row "row" of
-+ * window "wp", whose rows end before "end", where its part of the screen
-+ * can't be scrolled alone: a popup is over it, or a window is beside it and
-+ * the terminal has no left and right margins (t_CV).  The terminal scrolls
-+ * the rows across the screen (between the window's margins with t_CV), then
-+ * the cells that moved but are not the window's text (a window beside it, a
-+ * popup) are drawn again where they changed, and the rows that came from
-+ * under a popup are left for win_update() to draw.  Redrawing every row of
-+ * the window instead sent several times as much to the terminal.
++ * window "wp", whose rows end before "end", with popups over the screen.
++ * The terminal scrolls the window's rows (between its margins with t_CV),
++ * then the cells of popups that moved are drawn again where they changed, and
++ * the rows that came from under a popup are left for win_update() to draw.
++ * Not scrolling, every row of the window was drawn again: several times as
++ * much to the terminal, with the sticky lines of a plugin always there.
 + * Returns FAIL when it can't be done, then nothing has changed.
 + */
 +    static int
@@ -119,7 +118,6 @@ index 70e3610..e66699c 100644
 +    int		bot = 0;
 +    drawcost_T	dc_put;		// drawing the cells and rows again
 +    drawcost_T	dc_moved;	// not scrolling: the window's cells that change
-+    drawcost_T	dc_all;		// not scrolling: all the window's cells
 +    int		r, c, src, i;
 +    unsigned	off;
 +    int		wide;
@@ -149,12 +147,12 @@ index 70e3610..e66699c 100644
 +	return FAIL;
 +
 +    // What needs drawing again, found before anything changes.
-+    dc_put.cost = dc_moved.cost = dc_all.cost = 0;
++    dc_put.cost = dc_moved.cost = 0;
 +    for (r = row; r < end; ++r)
 +    {
 +	src = del ? r + line_count : r - line_count;
 +	off = LineOffset[r];
-+	dc_put.col = dc_moved.col = dc_all.col = -9;
++	dc_put.col = dc_moved.col = -9;
 +	// (a double-width character of a popup across a margin: the terminal
 +	// would move half of it)
 +	if ((left > 0 && cell_is_wide(off + left - 1))
@@ -162,10 +160,8 @@ index 70e3610..e66699c 100644
 +	    goto fail;
 +	for (c = left; c < right; ++c)
 +	{
-+#ifdef FEAT_PROP_POPUP
 +	    if (popup_is_under_opacity(r, c))
 +		goto fail;
-+#endif
 +	    // (a double-width character here or moving here, half in the
 +	    // window's text, half not)
 +	    if (c + 1 < right && (cell_is_wide(off + c)
@@ -183,12 +179,9 @@ index 70e3610..e66699c 100644
 +		    bot = MAX(bot, r - W_WINROW(wp) + 1);
 +		    draw_cost(&dc_put, c, ScreenAttrs[LineOffset[src] + c]);
 +		}
-+		else if (src >= row && src < end)
-+		{
-+		    if (!same_cell(off + c, LineOffset[src] + c))
-+			draw_cost(&dc_moved, c, ScreenAttrs[LineOffset[src] + c]);
-+		    draw_cost(&dc_all, c, ScreenAttrs[LineOffset[src] + c]);
-+		}
++		else if (src >= row && src < end
++				&& !same_cell(off + c, LineOffset[src] + c))
++		    draw_cost(&dc_moved, c, ScreenAttrs[LineOffset[src] + c]);
 +	    }
 +	    // the terminal shows the cell "line_count" rows away (or nothing)
 +	    // where ScreenLines[] keeps what is there
@@ -204,14 +197,9 @@ index 70e3610..e66699c 100644
 +    // (a terminal window draws itself, not in win_update())
 +    if (bot > 0 && bt_terminal(wp->w_buffer))
 +	goto fail;
-+    // Not when it draws more than not scrolling: a wide window beside this
-+    // one moves too.  Not scrolling draws the window's cells that change, or
-+    // all of them when its rows are copied (see screen_del_lines()).
-+    if (dc_put.cost >= (line_count <= 3
-+#ifdef FEAT_PROP_POPUP
-+		&& !popup_visible
-+#endif
-+		? dc_all.cost : dc_moved.cost))
++    // Not when it draws more than not scrolling, which draws the window's
++    // cells that change: big popups that move too.
++    if (dc_put.cost >= dc_moved.cost)
 +	goto fail;
 +
 +#ifdef FEAT_CLIPBOARD
@@ -298,11 +286,12 @@ index 70e3610..e66699c 100644
 +    vim_free(put);
 +    return FAIL;
 +}
++#endif
 +
  /*
   * Common code for win_ins_lines() and win_del_lines().
   * Returns OK or FAIL when the work has been done.
-@@ -4269,11 +4540,6 @@ win_do_lines(
+@@ -4269,11 +4529,6 @@ win_do_lines(
  	return FAIL;
      }
  
@@ -314,28 +303,26 @@ index 70e3610..e66699c 100644
  #ifdef FEAT_IMAGE
      if (visible_image_placements())
  	return FAIL;
-@@ -4302,6 +4568,25 @@ win_do_lines(
+@@ -4302,6 +4557,23 @@ win_do_lines(
  	return FAIL;
  #endif
  
-+    // Popups on the screen, or a window beside this one and a terminal that
-+    // can't scroll between left and right margins: scroll the rows and put
-+    // back what moved but should not have.
-+    if (
 +#ifdef FEAT_PROP_POPUP
-+	    popup_visible ||
-+#endif
-+	    (wp->w_width != topframe->fr_width && *T_CSV == NUL))
++    // Popups on the screen: scroll the rows under them and put back what
++    // moved but should not have.  Not with a window beside this one and a
++    // terminal that can't scroll between left and right margins: that window
++    // would move too, and be seen moving before it was put back (Konsole).
++    if (popup_visible)
 +    {
-+	if (scroll_region && win_scroll_rows(wp, W_WINROW(wp) + row,
++	if (scroll_region && (wp->w_width == topframe->fr_width
++							   || *T_CSV != NUL)
++		&& win_scroll_rows(wp, W_WINROW(wp) + row,
 +				W_WINROW(wp) + wp->w_height, line_count, del,
 +							    clear_attr) == OK)
 +	    return OK;
-+#ifdef FEAT_PROP_POPUP
-+	if (popup_visible)
-+	    return FAIL;
-+#endif
++	return FAIL;
 +    }
++#endif
 +
      /*
       * If the terminal can set a scroll region, use that.

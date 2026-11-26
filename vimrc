@@ -115,8 +115,6 @@ augroup END
 set fillchars+=vert:│
 " windows side by side: scrolling one line redrew the whole window (5x the output, a lagging
 " terminal while a key is held). The vim script asks whether the terminal has left/right margins.
-" Without them (Konsole) vim scrolls the rows across the screen and draws the
-" windows beside again (patches/vim/scroll-beside-and-under-popups.patch).
 if get(g:, 'vimzip_decslrm', 0)
   let &t_CV = "\e[%i%p1%d;%p2%ds"
   let &t_ti .= "\e[?69h"
