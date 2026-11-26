@@ -115,6 +115,8 @@ augroup END
 set fillchars+=vert:│
 " windows side by side: scrolling one line redrew the whole window (5x the output, a lagging
 " terminal while a key is held). The vim script asks whether the terminal has left/right margins.
+" Without them (Konsole) vim scrolls the rows across the screen and draws the
+" windows beside again (patches/vim/scroll-beside-and-under-popups.patch).
 if get(g:, 'vimzip_decslrm', 0)
   let &t_CV = "\e[%i%p1%d;%p2%ds"
   let &t_ti .= "\e[?69h"
@@ -2816,28 +2818,12 @@ function! s:Ruler() abort
     let s:ruler_info[s:rulers[-1]] = {'win': w, 'h': h, 'n': n, 'target': target}
   endfor
 endfunction
-" hidden while the text scrolls: with any popup on the screen vim redraws a scrolled window line by
-" line instead of scrolling it (3x the output with a key held down, a terminal falling behind).
-" Only where it can scroll: the full screen width, or with the terminal's margins (see t_CV).
-function! s:RulerScroll() abort
-  " (a popup that scrolled, Space fp's list or the help, has no marks to move)
-  if win_gettype() !=# '' || empty(s:rulers)
-    return
-  endif
-  " the windows that scrolled (with the mouse wheel not always the current one)
-  let wins = map(filter(keys(v:event), 'v:val =~# "^\\d\\+$" && v:event[v:val].topline'), 'win_id2win(str2nr(v:val))')
-  if empty(s:rulers) || empty(filter(wins, '&t_CV !=# "" || winwidth(v:val) == &columns'))
-    return
-  endif
-  call map(copy(s:rulers), 'popup_hide(v:val)')
-  call timer_stop(get(s:, 'ruler_show', -1))
-  let s:ruler_show = timer_start(300, {-> map(copy(s:rulers), 'popup_show(v:val)')})
-endfunction
+" (they stay while the text scrolls: vim scrolls it under popups, see
+" patches/vim/scroll-beside-and-under-popups.patch)
 augroup vimzip_ruler
   autocmd!
   autocmd User GitGutter call s:RulerLater()
   autocmd WinResized,VimResized,WinClosed,TabEnter,BufWinEnter * call s:RulerLater()
-  autocmd WinScrolled * call s:RulerScroll()
 augroup END
 
 " cache cleanup, at most once a day: regenerable caches (tags, words) go after 90 unused days,
