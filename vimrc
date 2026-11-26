@@ -1711,6 +1711,55 @@ endfunction
 inoremap <silent> <expr> <LeftMouse> <SID>InsertClick()
 let g:NERDTreeMouseMode = 3
 
+" smooth scrolling with the mouse wheel or a touchpad (g:vimzip_smooth_scroll = 0: as vim does): the
+" steps add up, and the window under the mouse moves a third of what is left every 16 ms. A
+" touchpad's steps come unevenly (Konsole: 0 to 5 in a frame), and the text jumped 0 to 15 lines.
+" (in Normal mode; popups, terminal windows, the other modes scroll as vim does)
+let s:wheel = {}
+let s:wheel_clock = reltime()
+function! s:Wheel(lines, key) abort
+  let w = getmousepos().winid
+  if !get(g:, 'vimzip_smooth_scroll', 1) || !w || win_gettype(w) !=# ''
+        \ || getbufvar(winbufnr(w), '&buftype') ==# 'terminal'
+    call feedkeys(a:key, 'n')
+    return
+  endif
+  " (the other way: what was left of this one goes)
+  let left = get(s:wheel, w, 0)
+  let s:wheel[w] = (left * a:lines > 0 ? left : 0) + a:lines
+  if get(s:, 'wheel_timer', -1) < 0
+    let s:wheel_due = reltimefloat(reltime(s:wheel_clock))
+    call s:WheelFrame(0)
+  endif
+endfunction
+function! s:WheelFrame(timer) abort
+  let s:wheel_timer = -1
+  for [id, n] in items(s:wheel)
+    let w = str2nr(id)
+    let step = (abs(n) + 2) / 3 * (n > 0 ? 1 : -1)
+    let top = line('w0', w)
+    if win_id2win(w)
+      call win_execute(w, 'normal! ' . abs(step) . (step > 0 ? "\<C-e>" : "\<C-y>"))
+      " the bracket colors and the sticky lines in the same frame: a moment later, they drew the
+      " screen once more (a frame 66 ms instead of 16 at full speed)
+      call s:Brackets(w)
+      call s:Sticky(w)
+    endif
+    " (at the end of the file, or the window gone: no more of it)
+    let s:wheel[id] = win_id2win(w) && line('w0', w) != top ? n - step : 0
+  endfor
+  call filter(s:wheel, 'v:val != 0')
+  if !empty(s:wheel)
+    " (the next frame 16 ms after this one was due, not 16 ms after this one and the screen were
+    " done: 20 ms; behind, at once)
+    let now = reltimefloat(reltime(s:wheel_clock))
+    let s:wheel_due = s:wheel_due + 0.016 > now ? s:wheel_due + 0.016 : now
+    let s:wheel_timer = timer_start(max([1, float2nr(1000 * (s:wheel_due - now))]), function('s:WheelFrame'))
+  endif
+endfunction
+nnoremap <silent> <ScrollWheelDown> <Cmd>call <SID>Wheel(3, "\<lt>ScrollWheelDown>")<CR>
+nnoremap <silent> <ScrollWheelUp> <Cmd>call <SID>Wheel(-3, "\<lt>ScrollWheelUp>")<CR>
+
 " One status bar for the whole screen (vim has no laststatus=3 as Neovim does).
 " The status lines along the bottom edge together draw the bar for the current window: its
 " left part in the leftmost one, its right part in the rightmost, plain bar in between.
@@ -4931,7 +4980,7 @@ endfunction
 " (vimzip_scroll: vimzip_view is the picture viewer's, which this group's autocmd! emptied)
 augroup vimzip_scroll
   autocmd!
-  autocmd WinScrolled * call s:ViewLater(map(filter(keys(v:event), 'v:val =~# "^\\d\\+$"'), 'str2nr(v:val)'))
+  autocmd WinScrolled * call s:ViewLater(map(filter(keys(v:event), 'v:val =~# "^\\d\\+$" && !has_key(s:wheel, v:val)'), 'str2nr(v:val)'))
   autocmd BufWinEnter,TextChanged,TextChangedI,InsertLeave,Syntax * call s:ViewLater([win_getid()])
   autocmd WinResized,VimResized,TabEnter,WinClosed * call s:ViewLater(gettabinfo(tabpagenr())[0].windows)
   " (the cursor near the top: the sticky lines make room for it, or take it back)
