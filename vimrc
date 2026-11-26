@@ -1036,9 +1036,25 @@ function! s:Ago(t) abort
 endfunction
 function! s:BlameClear() abort
   if exists('s:blame_at') && bufexists(s:blame_at[0])
-    silent! call prop_remove({'type': 'vimzip_blame', 'bufnr': s:blame_at[0], 'all': 1}, s:blame_at[1])
+    " (lines added or deleted above it moved it: then looked for in the whole file, 4 ms in 200000
+    " lines; at the line where it was it stayed, and the next line's blame was a second one)
+    let [buf, lnum, tick] = s:blame_at
+    if getbufvar(buf, 'changedtick') == tick
+      silent! call prop_remove({'type': 'vimzip_blame', 'bufnr': buf, 'all': 1}, lnum)
+    else
+      silent! call prop_remove({'type': 'vimzip_blame', 'bufnr': buf, 'all': 1})
+    endif
   endif
   unlet! s:blame_at
+endfunction
+" a line deleted with its blame comes back with it on undo, which nothing knew of: away after a change
+function! s:BlameChanged() abort
+  if get(b:, 'vimzip_blamed', 0)
+    silent! call prop_remove({'type': 'vimzip_blame', 'bufnr': bufnr(''), 'all': 1})
+    if get(s:, 'blame_at', [0])[0] == bufnr('')
+      unlet s:blame_at
+    endif
+  endif
 endfunction
 function! s:Blame() abort
   call s:BlameClear()
@@ -1071,7 +1087,8 @@ function! s:BlameShow(buf, lnum, out, gen) abort
   let text = a:out[0] =~# '^0\{40}' ? 'You • Uncommitted changes'
         \ : get(info, 'author', '?') . ', ' . s:Ago(str2nr(get(info, 'author-time', '0'))) . ' • ' . get(info, 'summary', '')
   call prop_add(a:lnum, 0, {'type': 'vimzip_blame', 'bufnr': a:buf, 'text': text, 'text_align': 'after', 'text_padding_left': 4, 'text_wrap': 'truncate'})
-  let s:blame_at = [a:buf, a:lnum]
+  let s:blame_at = [a:buf, a:lnum, getbufvar(a:buf, 'changedtick')]
+  call setbufvar(a:buf, 'vimzip_blamed', 1)
 endfunction
 " commit of the current line in a popup (Space gc)
 function! s:CommitPopup() abort
@@ -1329,6 +1346,7 @@ augroup vimzip_blame
         \ | syntax match VimzipTimelineAge /^\%>1l\S\+/ | syntax match VimzipTimelineDirty /^\*.*/
   autocmd CursorHold * call s:Blame()
   autocmd CursorMoved,CursorMovedI,InsertEnter,BufLeave * if exists('s:blame_at') | call s:BlameClear() | endif
+  autocmd TextChanged * call s:BlameChanged()
 augroup END
 
 " ─── search ──────────────────────────────────────────────────────────────────────────────────────
