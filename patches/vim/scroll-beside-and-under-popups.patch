@@ -1,0 +1,356 @@
+diff --git a/src/drawscreen.c b/src/drawscreen.c
+index 7688429..3d8bde0 100644
+--- a/src/drawscreen.c
++++ b/src/drawscreen.c
+@@ -2420,6 +2420,9 @@ win_update(win_T *wp)
+ 		|| top_to_mod
+ #endif
+ 		|| idx >= wp->w_lines_valid
++		|| (row < wp->w_scroll_redraw_bot
++		    && row + wp->w_lines[idx].wl_size
++						   > wp->w_scroll_redraw_top)
+ 		|| (row + wp->w_lines[idx].wl_size > bot_start)
+ 		|| (mod_top != 0
+ 		    && (lnum == mod_top
+@@ -2764,6 +2767,7 @@ win_update(win_T *wp)
+     }
+ 
+     // End of loop over all window lines.
++    wp->w_scroll_redraw_top = wp->w_scroll_redraw_bot = 0;
+ 
+ #ifdef FEAT_SYN_HL
+     // Now that the window has been redrawn with the old and new cursor line,
+diff --git a/src/screen.c b/src/screen.c
+index 70e3610..e66699c 100644
+--- a/src/screen.c
++++ b/src/screen.c
+@@ -4236,6 +4236,277 @@ win_del_lines(
+     return OK;
+ }
+ 
++/*
++ * Return TRUE when the cell at "row" / "col" shows the text of window "wp":
++ * it is in the window's columns and not under a popup.
++ */
++    static int
++cell_in_win(win_T *wp, int row, int col)
++{
++    return col >= wp->w_wincol && col < wp->w_wincol + wp->w_width
++						 && !skip_for_popup(row, col);
++}
++
++/*
++ * Return TRUE when the cell at "off" in ScreenLines[] starts a double-width
++ * character.
++ */
++    static int
++cell_is_wide(unsigned off)
++{
++    return enc_utf8 && ScreenLinesUC[off] != 0
++				    && utf_char2cells(ScreenLinesUC[off]) == 2;
++}
++
++/*
++ * Return TRUE when the cells at "off1" and "off2" in ScreenLines[] show the
++ * same.
++ */
++    static int
++same_cell(unsigned off1, unsigned off2)
++{
++    int		i;
++
++    if (ScreenLines[off1] != ScreenLines[off2]
++	    || ScreenAttrs[off1] != ScreenAttrs[off2])
++	return FALSE;
++    if (enc_utf8)
++    {
++	if (ScreenLinesUC[off1] != ScreenLinesUC[off2])
++	    return FALSE;
++	if (ScreenLinesUC[off1] != 0)
++	    for (i = 0; i < Screen_mco; ++i)
++		if (ScreenLinesC[i][off1] != ScreenLinesC[i][off2])
++		    return FALSE;
++    }
++    return TRUE;
++}
++
++// The bytes drawing cells takes, roughly: one for the character, more to move
++// the cursor there or change the attributes.
++typedef struct {
++    long	cost;
++    int		col;	    // the cell drawn last
++    int		attr;	    // its attributes
++} drawcost_T;
++
++    static void
++draw_cost(drawcost_T *dc, int col, int attr)
++{
++    dc->cost += 1 + (col != dc->col + 1 ? 8 : 0) + (attr != dc->attr ? 12 : 0);
++    dc->col = col;
++    dc->attr = attr;
++}
++
++/*
++ * Delete ("del" TRUE) or insert "line_count" lines at screen row "row" of
++ * window "wp", whose rows end before "end", where its part of the screen
++ * can't be scrolled alone: a popup is over it, or a window is beside it and
++ * the terminal has no left and right margins (t_CV).  The terminal scrolls
++ * the rows across the screen (between the window's margins with t_CV), then
++ * the cells that moved but are not the window's text (a window beside it, a
++ * popup) are drawn again where they changed, and the rows that came from
++ * under a popup are left for win_update() to draw.  Redrawing every row of
++ * the window instead sent several times as much to the terminal.
++ * Returns FAIL when it can't be done, then nothing has changed.
++ */
++    static int
++win_scroll_rows(
++    win_T	*wp,
++    int		row,
++    int		end,
++    int		line_count,
++    int		del,
++    int		clear_attr)
++{
++    int		height = end - row;
++    int		left = 0;
++    int		right = screen_Columns;
++    char_u	*put;		// cells to draw again
++    int		top = 999;	// window rows to draw again
++    int		bot = 0;
++    drawcost_T	dc_put;		// drawing the cells and rows again
++    drawcost_T	dc_moved;	// not scrolling: the window's cells that change
++    drawcost_T	dc_all;		// not scrolling: all the window's cells
++    int		r, c, src, i;
++    unsigned	off;
++    int		wide;
++
++    if (*T_CS == NUL || *T_CCS != NUL || *T_DB != NUL || enc_dbcs != 0
++	    || (del ? *T_CDL == NUL && *T_DL == NUL
++		    : *T_CAL == NUL && *T_AL == NUL)
++	    || !screen_valid(TRUE)
++	    || line_count <= 0 || line_count >= height
++	    || line_count > p_ttyscroll || end > screen_Rows
++	    || wp->w_scroll_redraw_bot > 0
++#ifdef FEAT_GUI
++	    || gui.in_use
++#endif
++#ifdef FEAT_CLIPBOARD
++	    || (clip_star.state != SELECT_CLEARED && redrawing_for_callback > 0)
++#endif
++	    )
++	return FAIL;
++    if (*T_CSV != NUL && wp->w_width != Columns)
++    {
++	left = wp->w_wincol;
++	right = wp->w_wincol + wp->w_width;
++    }
++    put = alloc_clear(height * screen_Columns);
++    if (put == NULL)
++	return FAIL;
++
++    // What needs drawing again, found before anything changes.
++    dc_put.cost = dc_moved.cost = dc_all.cost = 0;
++    for (r = row; r < end; ++r)
++    {
++	src = del ? r + line_count : r - line_count;
++	off = LineOffset[r];
++	dc_put.col = dc_moved.col = dc_all.col = -9;
++	// (a double-width character of a popup across a margin: the terminal
++	// would move half of it)
++	if ((left > 0 && cell_is_wide(off + left - 1))
++		|| (right < screen_Columns && cell_is_wide(off + right - 1)))
++	    goto fail;
++	for (c = left; c < right; ++c)
++	{
++#ifdef FEAT_PROP_POPUP
++	    if (popup_is_under_opacity(r, c))
++		goto fail;
++#endif
++	    // (a double-width character here or moving here, half in the
++	    // window's text, half not)
++	    if (c + 1 < right && (cell_is_wide(off + c)
++			|| (src >= row && src < end
++				      && cell_is_wide(LineOffset[src] + c)))
++		    && cell_in_win(wp, r, c) != cell_in_win(wp, r, c + 1))
++		goto fail;
++	    if (cell_in_win(wp, r, c))
++	    {
++		// the window's text moving from under a popup: the popup's
++		// text moves here
++		if (src >= row && src < end && !cell_in_win(wp, src, c))
++		{
++		    top = MIN(top, r - W_WINROW(wp));
++		    bot = MAX(bot, r - W_WINROW(wp) + 1);
++		    draw_cost(&dc_put, c, ScreenAttrs[LineOffset[src] + c]);
++		}
++		else if (src >= row && src < end)
++		{
++		    if (!same_cell(off + c, LineOffset[src] + c))
++			draw_cost(&dc_moved, c, ScreenAttrs[LineOffset[src] + c]);
++		    draw_cost(&dc_all, c, ScreenAttrs[LineOffset[src] + c]);
++		}
++	    }
++	    // the terminal shows the cell "line_count" rows away (or nothing)
++	    // where ScreenLines[] keeps what is there
++	    else if (ScreenAttrs[off + c] != (sattr_T)-1
++		    && (src < row || src >= end
++				|| !same_cell(off + c, LineOffset[src] + c)))
++	    {
++		put[(r - row) * screen_Columns + c] = TRUE;
++		draw_cost(&dc_put, c, ScreenAttrs[off + c]);
++	    }
++	}
++    }
++    // (a terminal window draws itself, not in win_update())
++    if (bot > 0 && bt_terminal(wp->w_buffer))
++	goto fail;
++    // Not when it draws more than not scrolling: a wide window beside this
++    // one moves too.  Not scrolling draws the window's cells that change, or
++    // all of them when its rows are copied (see screen_del_lines()).
++    if (dc_put.cost >= (line_count <= 3
++#ifdef FEAT_PROP_POPUP
++		&& !popup_visible
++#endif
++		? dc_all.cost : dc_moved.cost))
++	goto fail;
++
++#ifdef FEAT_CLIPBOARD
++    clip_clear_selection(&clip_star);
++#endif
++    // (between the window's margins with t_CV)
++    scroll_region_set(wp, row - W_WINROW(wp));
++    if (screen_attr != clear_attr)
++	screen_stop_highlight();
++    if (clear_attr != 0)
++	screen_start_highlight(clear_attr);
++    windgoto(row, left);
++    if (del && *T_CDL != NUL && (line_count > 1 || *T_DL == NUL))
++	term_delete_lines(line_count);
++    else if (!del && *T_CAL != NUL && (line_count > 1 || *T_AL == NUL))
++	term_append_lines(line_count);
++    else
++	for (i = 0; i < line_count; ++i)
++	{
++	    windgoto(row, left);
++	    out_str(del ? T_DL : T_AL);
++	    screen_start();
++	}
++    screen_start();
++    scroll_region_reset();
++
++    // The window's text moves in ScreenLines[] as on the terminal.  Rows in
++    // the order that reads each cell before it is overwritten.
++    for (i = 0; i < height; ++i)
++    {
++	r = del ? row + i : end - 1 - i;
++	src = del ? r + line_count : r - line_count;
++	off = LineOffset[r];
++	for (c = left; c < right; ++c)
++	{
++	    if (!cell_in_win(wp, r, c))
++		continue;
++	    if (src >= row && src < end)
++	    {
++		unsigned from = LineOffset[src] + c;
++
++		ScreenLines[off + c] = ScreenLines[from];
++		if (enc_utf8)
++		{
++		    ScreenLinesUC[off + c] = ScreenLinesUC[from];
++		    for (int ci = 0; ci < Screen_mco; ++ci)
++			ScreenLinesC[ci][off + c] = ScreenLinesC[ci][from];
++		}
++		ScreenAttrs[off + c] = ScreenAttrs[from];
++		ScreenCols[off + c] = ScreenCols[from];
++	    }
++	    else if (can_clear((char_u *)" "))
++		lineclear(off + c, 1, clear_attr);
++	    else
++		lineinvalid(off + c, 1);
++	}
++	LineWraps[r] = FALSE;
++    }
++
++    // The rest drawn again where it changed.
++    for (r = row; r < end; ++r)
++    {
++	off = LineOffset[r];
++	for (c = left; c < right; ++c)
++	{
++	    wide = cell_is_wide(off + c) && c + 1 < right;
++	    if (put[(r - row) * screen_Columns + c]
++		    || (wide && put[(r - row) * screen_Columns + c + 1]))
++		screen_char(off + c, r, c);
++	    if (wide)
++		++c;
++	}
++    }
++    vim_free(put);
++
++    if (bot > 0)
++    {
++	wp->w_scroll_redraw_top = top;
++	wp->w_scroll_redraw_bot = bot;
++    }
++    return OK;
++
++fail:
++    vim_free(put);
++    return FAIL;
++}
++
+ /*
+  * Common code for win_ins_lines() and win_del_lines().
+  * Returns OK or FAIL when the work has been done.
+@@ -4269,11 +4540,6 @@ win_do_lines(
+ 	return FAIL;
+     }
+ 
+-#ifdef FEAT_PROP_POPUP
+-    // this doesn't work when there are popups or image placements visible
+-    if (popup_visible)
+-	return FAIL;
+-#endif
+ #ifdef FEAT_IMAGE
+     if (visible_image_placements())
+ 	return FAIL;
+@@ -4302,6 +4568,25 @@ win_do_lines(
+ 	return FAIL;
+ #endif
+ 
++    // Popups on the screen, or a window beside this one and a terminal that
++    // can't scroll between left and right margins: scroll the rows and put
++    // back what moved but should not have.
++    if (
++#ifdef FEAT_PROP_POPUP
++	    popup_visible ||
++#endif
++	    (wp->w_width != topframe->fr_width && *T_CSV == NUL))
++    {
++	if (scroll_region && win_scroll_rows(wp, W_WINROW(wp) + row,
++				W_WINROW(wp) + wp->w_height, line_count, del,
++							    clear_attr) == OK)
++	    return OK;
++#ifdef FEAT_PROP_POPUP
++	if (popup_visible)
++	    return FAIL;
++#endif
++    }
++
+     /*
+      * If the terminal can set a scroll region, use that.
+      * Always do this in a vertically split window.  This will redraw from
+diff --git a/src/structs.h b/src/structs.h
+index 2adcc27..650c654 100644
+--- a/src/structs.h
++++ b/src/structs.h
+@@ -4363,6 +4363,9 @@ struct window_S
+      */
+     int		w_lines_valid;	    // number of valid entries
+     wline_T	*w_lines;
++    int		w_scroll_redraw_top; // rows from w_scroll_redraw_top to
++    int		w_scroll_redraw_bot; // w_scroll_redraw_bot - 1 were scrolled
++				    // from under a popup: draw them again
+ 
+ #ifdef FEAT_FOLDING
+     garray_T	w_folds;	    // array of nested folds
