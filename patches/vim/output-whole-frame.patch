@@ -1,0 +1,16 @@
+diff --git a/src/term.c b/src/term.c
+index 25d3c52..589dc7e 100644
+--- a/src/term.c
++++ b/src/term.c
+@@ -2853,7 +2853,10 @@ termcapinit(char_u *name)
+ /*
+  * The number of calls to ui_write is reduced by using "out_buf".
+  */
+-#define OUT_SIZE	8191
++// Enough for a whole screen update: written while it was drawn, 8 KB at a time,
++// a frame came out over several msec, and a terminal that shows the screen
++// 10 msec after output stops (Konsole) showed two frames as one.
++#define OUT_SIZE	65535
+ 
+ // add one to allow mch_write() in os_win32.c to append a NUL
+ static char_u		out_buf[OUT_SIZE + 1];

@@ -1734,6 +1734,7 @@ function! s:Wheel(lines, key) abort
 endfunction
 function! s:WheelFrame(timer) abort
   let s:wheel_timer = -1
+  let start = reltimefloat(reltime(s:wheel_clock))
   for [id, n] in items(s:wheel)
     let w = str2nr(id)
     let step = (abs(n) + 2) / 3 * (n > 0 ? 1 : -1)
@@ -1749,11 +1750,14 @@ function! s:WheelFrame(timer) abort
     let s:wheel[id] = win_id2win(w) && line('w0', w) != top ? n - step : 0
   endfor
   call filter(s:wheel, 'v:val != 0')
+  " (the bar's line and column too, drawn in this frame)
+  call s:BarRefresh('moved')
   if !empty(s:wheel)
     " (the next frame 16 ms after this one was due, not 16 ms after this one and the screen were
-    " done: 20 ms; behind, at once)
+    " done: 20 ms; behind, 13 ms after this one: Konsole shows the screen 10 ms after output stops,
+    " two frames closer than that were shown as one)
     let now = reltimefloat(reltime(s:wheel_clock))
-    let s:wheel_due = s:wheel_due + 0.016 > now ? s:wheel_due + 0.016 : now
+    let s:wheel_due = s:wheel_due + 0.016 > start + 0.013 ? s:wheel_due + 0.016 : start + 0.013
     let s:wheel_timer = timer_start(max([1, float2nr(1000 * (s:wheel_due - now))]), function('s:WheelFrame'))
   endif
 endfunction
@@ -1769,7 +1773,8 @@ set laststatus=2 statusline=%!VimzipStatus()
 " the bar may sit in another window's status line, so redraw them all as the cursor or mode changes
 augroup vimzip_status
   autocmd!
-  autocmd CursorMoved,CursorMovedI,ModeChanged,WinEnter,BufEnter,TextChanged,TextChangedI * call s:BarRefresh()
+  autocmd CursorMoved,CursorMovedI * call s:BarRefresh('moved')
+  autocmd ModeChanged,WinEnter,BufEnter,TextChanged,TextChangedI * call s:BarRefresh()
   autocmd WinResized,VimResized * call s:BarRefresh()
   " ++nested: the tree stepping aside (or back) takes the timeline under it along
   autocmd VimResized * ++nested call s:Layout()
@@ -2001,13 +2006,20 @@ function! s:BarJoins() abort
     endif
   endfor
 endfunction
-function! s:BarRefresh() abort
+function! s:BarRefresh(...) abort
   " (while vim starts, the session and the tree opening asked 7 times: once, when it has started)
   if !get(s:, 'bar_on', 0)
     return
   endif
   unlet! s:bar_now
   let s:bar_now = s:BarLayout()
+  " (the cursor moved, the bar as it was: not drawn again. A wheel's frame moves the cursor, and
+  " drew the bar and the window edges a moment after it, which Konsole waited for: 30 frames a second)
+  if a:0 && s:bar_now ==# get(s:, 'bar_shown', [])
+    unlet! s:bar_now
+    return
+  endif
+  let s:bar_shown = s:bar_now
   call s:BarJoins()
   " mark every status line for the next screen update: :redrawstatus! updates the whole screen now,
   " once more per event (0.4 s each in a 6 MB minified line)
