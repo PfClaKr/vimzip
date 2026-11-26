@@ -1,0 +1,32 @@
+diff --git a/src/term.c b/src/term.c
+index 52efae1..25d3c52 100644
+--- a/src/term.c
++++ b/src/term.c
+@@ -2875,6 +2875,27 @@ out_flush(void)
+     if (out_pos == 0)
+ 	return;
+ 
++    // Only the cursor hidden and shown again, nothing drawn between: nothing
++    // to send.  A mapping or a timer did that each time, a touchpad's steps
++    // 100 times a second, and a terminal that shows the screen after 10 msec
++    // without output (Konsole) waited for 40 msec, 25 frames a second.
++    {
++	size_t	vi = STRLEN(T_VI);
++	size_t	ve = STRLEN(T_VE);
++	int	pos = 0;
++
++	if (vi > 0 && ve > 0)
++	    while (pos + (int)(vi + ve) <= out_pos
++		    && STRNCMP(out_buf + pos, T_VI, vi) == 0
++		    && STRNCMP(out_buf + pos + vi, T_VE, ve) == 0)
++		pos += (int)(vi + ve);
++	if (pos > 0 && pos == out_pos)
++	{
++	    out_pos = 0;
++	    return;
++	}
++    }
++
+     // set out_pos to 0 before ui_write, to avoid recursiveness
+     len = out_pos;
+     out_pos = 0;

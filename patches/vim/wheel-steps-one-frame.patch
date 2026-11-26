@@ -1,0 +1,88 @@
+diff --git a/src/globals.h b/src/globals.h
+index e160dbc..80effa4 100644
+--- a/src/globals.h
++++ b/src/globals.h
+@@ -882,6 +882,7 @@ EXTERN int	mouse_row;
+ EXTERN int	mouse_col;
+ EXTERN int	mouse_past_bottom INIT(= FALSE);// mouse below last line
+ EXTERN int	mouse_past_eol INIT(= FALSE);	// mouse right of line
++EXTERN int	mouse_scrolled INIT(= FALSE);	// a mouse wheel step scrolled
+ EXTERN int	mouse_dragging INIT(= 0);	// extending Visual area with
+ 						// mouse dragging
+ #if defined(FEAT_MOUSE_DEC)
+diff --git a/src/main.c b/src/main.c
+index 2b03a29..a604872 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -1512,7 +1512,7 @@ main_loop(
+ 	    setcursor();
+ 	    cursor_on();
+ 	}
+-	else if (do_redraw || stuff_empty())
++	else if ((do_redraw || stuff_empty()) && !mouse_scroll_wait())
+ 	{
+ #ifdef FEAT_GUI
+ 	    // If ui_breakcheck() was used a resize may have been postponed.
+diff --git a/src/mouse.c b/src/mouse.c
+index f6b1d40..c398b38 100644
+--- a/src/mouse.c
++++ b/src/mouse.c
+@@ -1277,6 +1277,7 @@ do_mousescroll(cmdarg_T *cap)
+ 	    cap->count0 = cap->count1;
+ 	    nv_scroll_line(cap);
+ 	}
++	mouse_scrolled = TRUE;
+ 
+ #ifdef FEAT_PROP_POPUP
+ 	if (WIN_IS_POPUP(curwin))
+@@ -2502,6 +2503,38 @@ do_mousescroll_horiz(long_u leftcol)
+     return set_leftcol((colnr_T)leftcol);
+ }
+ 
++/*
++ * After a mouse wheel step, before drawing the screen: return TRUE when a key
++ * comes before a frame (16 msec) has passed since the screen was drawn after
++ * one, then it is drawn once for both.  A touchpad sends a step every 7 msec
++ * (Konsole): the screen drawn for each, more often than a terminal shows it,
++ * moved by uneven jumps.  The first step after a pause is drawn at once.
++ */
++    int
++mouse_scroll_wait(void)
++{
++#ifdef ELAPSED_FUNC
++    static elapsed_T	drawn;
++    static int		drawn_set = FALSE;
++    long		left;
++
++    if (!mouse_scrolled)
++	return FALSE;
++    mouse_scrolled = FALSE;
++    if (drawn_set)
++	for (left = 16 - ELAPSED_FUNC(drawn); left > 0;
++					     left = 16 - ELAPSED_FUNC(drawn))
++	{
++	    if (char_avail())
++		return TRUE;
++	    ui_delay(left < 2 ? left : 2, TRUE);
++	}
++    ELAPSED_INIT(drawn);
++    drawn_set = TRUE;
++#endif
++    return FALSE;
++}
++
+ /*
+  * Normal and Visual modes implementation for scrolling in direction
+  * "cap->arg", which is one of the MSCR_ values.
+diff --git a/src/proto/mouse.pro b/src/proto/mouse.pro
+index 5276ba4..bcafacf 100644
+--- a/src/proto/mouse.pro
++++ b/src/proto/mouse.pro
+@@ -16,6 +16,7 @@ int mouse_model_popup(void);
+ void reset_dragwin(void);
+ int jump_to_mouse(int flags, int *inclusive, int which_button);
+ int do_mousescroll_horiz(long_u leftcol);
++int mouse_scroll_wait(void);
+ void nv_mousescroll(cmdarg_T *cap);
+ void nv_mouse(cmdarg_T *cap);
+ void reset_held_button(void);
