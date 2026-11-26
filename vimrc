@@ -4674,6 +4674,63 @@ function! s:BracketsClear(w) abort
   endfor
   call setwinvar(a:w, 'vimzip_brackets', [])
 endfunction
+" each line's brackets out of strings and comments ([column, bracket]), and the depth where lines
+" start, kept until the text or its syntax changes: scrolling looks only at the lines coming into view
+" (asking the syntax of every bracket in view, and the search above for the depth at the top, were
+" most of each scroll step: 3 ms in a long function)
+function! s:BracketsKnown() abort
+  let key = [b:changedtick, &syntax]
+  if get(b:, 'vimzip_brackets_known_key', []) !=# key
+    let b:vimzip_brackets_known = {}
+    let b:vimzip_brackets_depth = {}
+    let b:vimzip_brackets_known_key = key
+  endif
+  return b:vimzip_brackets_known
+endfunction
+function! s:BracketsOf(l, known) abort
+  if !has_key(a:known, a:l)
+    let found = []
+    let t = getline(a:l)
+    if len(t) <= 1000 && t =~# '[()[\]{}]'
+      let at = match(t, '[()[\]{}]')
+      while at >= 0
+        if !s:InText(a:l, at + 1)
+          call add(found, [at + 1, t[at]])
+        endif
+        let at = match(t, '[()[\]{}]', at + 1)
+      endwhile
+    endif
+    let a:known[a:l] = found
+  endif
+  return a:known[a:l]
+endfunction
+" the depth at line "l" from one known a few lines below (scrolled up): back over the lines between,
+" -1 when a bracket closed below nothing there
+function! s:BracketsDepthBack(l, known, depths) abort
+  for below in range(a:l + 1, a:l + 10)
+    if has_key(a:depths, below)
+      let lines = range(a:l, below - 1)
+      let net = 0
+      for l in lines
+        for [_, ch] in s:BracketsOf(l, a:known)
+          let net += ch =~# '[([{]' ? 1 : -1
+        endfor
+      endfor
+      let depth = a:depths[below] - net
+      let d = depth
+      for l in lines
+        for [_, ch] in s:BracketsOf(l, a:known)
+          let d += ch =~# '[([{]' ? 1 : -1
+          if d < 0
+            return -1
+          endif
+        endfor
+      endfor
+      return depth >= 0 ? depth : -1
+    endif
+  endfor
+  return -1
+endfunction
 function! s:BracketsHere() abort
   let [top, bot] = [line('w0'), line('w$')]
   " (nothing changed in view: as it is)
@@ -4683,43 +4740,44 @@ function! s:BracketsHere() abort
   endif
   let w:vimzip_brackets_key = key
   call s:BracketsClear(win_getid())
-  let skip = 's:InText()'
-  " the depth at the top of the view: the brackets open around it
-  let view = winsaveview()
-  call cursor(top, 1)
-  let depth = 0
-  let start = reltime()
-  " (without asking the syntax: a bracket in a string up there shifts the colors at worst)
-  while depth < 30 && reltimefloat(reltime(start)) < 0.02 && searchpair('[([{]', '', '[)\]}]', 'bW', '', 0, 10) > 0
-    let depth += 1
-    " (one on a line that is not indented opens a definition: nothing around it to look for, which
-    " would scan the whole file above)
-    if indent('.') == 0
-      break
-    endif
-  endwhile
-  call winrestview(view)
+  let known = s:BracketsKnown()
+  let depths = b:vimzip_brackets_depth
+  " the depth at the top of the view: known from before, or from a few lines below
+  let depth = get(depths, top, -1)
+  if depth < 0
+    let depth = s:BracketsDepthBack(top, known, depths)
+  endif
+  if depth < 0
+    " else the brackets open around it, searched for
+    let view = winsaveview()
+    call cursor(top, 1)
+    let depth = 0
+    let start = reltime()
+    " (without asking the syntax: a bracket in a string up there shifts the colors at worst)
+    while depth < 30 && reltimefloat(reltime(start)) < 0.02 && searchpair('[([{]', '', '[)\]}]', 'bW', '', 0, 10) > 0
+      let depth += 1
+      " (one on a line that is not indented opens a definition: nothing around it to look for, which
+      " would scan the whole file above)
+      if indent('.') == 0
+        break
+      endif
+    endwhile
+    call winrestview(view)
+  endif
   let groups = [[], [], []]
   for l in range(top, bot)
-    let t = getline(l)
-    if len(t) > 1000 || t !~# '[()[\]{}]'
-      continue
-    endif
-    let at = match(t, '[()[\]{}]')
-    while at >= 0
-      let ch = t[at]
-      if !s:InText(l, at + 1)
-        if ch =~# '[([{]'
-          call add(groups[depth % 3], [l, at + 1])
-          let depth += 1
-        else
-          let depth = max([0, depth - 1])
-          call add(groups[depth % 3], [l, at + 1])
-        endif
+    let depths[l] = depth
+    for [col, ch] in has_key(known, l) ? known[l] : s:BracketsOf(l, known)
+      if ch =~# '[([{]'
+        call add(groups[depth % 3], [l, col])
+        let depth += 1
+      else
+        let depth = max([0, depth - 1])
+        call add(groups[depth % 3], [l, col])
       endif
-      let at = match(t, '[()[\]{}]', at + 1)
-    endwhile
+    endfor
   endfor
+  let depths[bot + 1] = depth
   let ids = []
   for i in range(3)
     for n in range(0, len(groups[i]) - 1, 8)
@@ -4758,23 +4816,34 @@ function! s:StickyHeads(w) abort
     endwhile
     return heads
   endif
-  let skip = 's:InText()'
-  let view = winsaveview()
-  call cursor(top, 1)
-  while len(heads) < 3 && searchpair('{', '', '}', 'bW', skip, 0, 20) > 0
-    let l = line('.')
-    " the head: this line, or the one before when the { stands alone (K&R and Allman alike)
-    if getline(l) =~# '^\s*{' && l > 1
-      let l = prevnonblank(l - 1)
-    endif
-    if l < top && index(heads, l) < 0
-      call insert(heads, l)
-    endif
-    if indent(l) == 0
-      break
-    endif
-  endwhile
-  call winrestview(view)
+  " (no brace between this top and the one before: the same blocks, not searched for again, 4 ms
+  " a scroll step in a long function)
+  let known = s:BracketsKnown()
+  let memo = get(w:, 'vimzip_sticky_memo', [])
+  if len(memo) == 4 && memo[0] == b && memo[1] == b:changedtick && abs(memo[2] - top) <= 50
+        \ && empty(filter(range(min([top, memo[2]]), max([top, memo[2]]) - 1),
+        \   {_, l -> !empty(filter(copy(s:BracketsOf(l, known)), 'v:val[1] =~# "[{}]"'))}))
+    let heads = copy(memo[3])
+  else
+    let skip = 's:InText()'
+    let view = winsaveview()
+    call cursor(top, 1)
+    while len(heads) < 3 && searchpair('{', '', '}', 'bW', skip, 0, 20) > 0
+      let l = line('.')
+      " the head: this line, or the one before when the { stands alone (K&R and Allman alike)
+      if getline(l) =~# '^\s*{' && l > 1
+        let l = prevnonblank(l - 1)
+      endif
+      if l < top && index(heads, l) < 0
+        call insert(heads, l)
+      endif
+      if indent(l) == 0
+        break
+      endif
+    endwhile
+    call winrestview(view)
+  endif
+  let w:vimzip_sticky_memo = [b, b:changedtick, top, copy(heads)]
   " (only what is out of view: each head line covers one at the top)
   return filter(heads, 'v:val < top + v:key')
 endfunction
