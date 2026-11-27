@@ -2391,6 +2391,32 @@ function! s:TreeSync(...) abort
     endif
   endif
 endfunction
+" (inside the tree's window) the path on line "l" of the tree, and back to its line
+function! s:TreePathAt(l) abort
+  try
+    let p = b:NERDTree.ui.getPath(a:l)
+    return empty(p) ? '' : p.str()
+  catch
+    return ''
+  endtry
+endfunction
+function! s:TreeLineOf(path) abort
+  try
+    let node = a:path ==# '' ? {} : b:NERDTree.root.findNode(g:NERDTreePath.New(a:path))
+    return empty(node) ? 0 : b:NERDTree.ui.getLineNum(node)
+  catch
+    return 0
+  endtry
+endfunction
+function! s:TreeKeep(top, cur) abort
+  let [top, cur] = [s:TreeLineOf(a:top), s:TreeLineOf(a:cur)]
+  if cur > 0
+    call cursor(cur, col('.'))
+  endif
+  if top > 0
+    call winrestview({'topline': top})
+  endif
+endfunction
 function! s:TreeSyncHere() abort
   if !exists('b:NERDTree')
     return
@@ -2420,7 +2446,11 @@ function! s:TreeSyncHere() abort
   let s:head_moved = get(s:, 'head_moved', 0) || get(s:, 'tree_git', git)[1 :] != git[1 :]
   let s:tree_git = git
   if changed
+    " (the tree kept where it was by what is on its lines, not their numbers: a file added or
+    " removed above the view moved every line under them, and the tree seemed to scroll by itself)
+    let [top, cur] = [s:TreePathAt(line('w0')), s:TreePathAt(line('.'))]
     call b:NERDTree.render()
+    call s:TreeKeep(top, cur)
   endif
   " (and every 30 s at most otherwise: the plugin drops a result that arrives while the tree is
   " being reopened, which the next look then puts right)
